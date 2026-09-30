@@ -233,10 +233,13 @@ public final class RTLSDRDevice: @unchecked Sendable {
 
     // MARK: Samples
 
-    /// Reads `byteCount` bytes of interleaved unsigned 8-bit I/Q and returns them (not while streaming).
-    public func readSamples(byteCount: Int) throws -> [UInt8] {
+    /// Reads `byteCount` bytes of interleaved unsigned 8-bit I/Q and returns them (not while streaming). The stream
+    /// starts afresh, so every byte was sampled after the call began. Short reads finish sooner with a smaller
+    /// `blockSize` (a multiple of 512), because a block is only delivered once it is full.
+    public func readSamples(byteCount: Int, blockSize: Int = 65_536) throws -> [UInt8] {
         let collector = SampleCollector(target: byteCount)
         try startStreaming(
+            blockSize: blockSize,
             onError: { collector.fail($0) },
             handler: { collector.append($0) }
         )
