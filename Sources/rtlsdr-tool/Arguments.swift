@@ -32,7 +32,7 @@ struct Arguments {
         return nil
     }
 
-    static let switches: Set<String> = ["--fast", "--write", "--guard", "--streaming", "--allow-bias-tee", "--no-cover"]
+    static let switches: Set<String> = ["--fast", "--write", "--guard", "--streaming", "--allow-bias-tee", "--no-cover", "--raw", "--json", "--analyze", "--list-protocols", "--codes"]
 
     /// A number (e-notation allowed). Bounded so that every later conversion to `Int` is safe.
     func double(_ name: String, default value: Double) -> Double {

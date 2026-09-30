@@ -17,6 +17,15 @@ usage:
                    [--sweeps 1] [--no-cover] [--fast] [--csv FILE]
   rtlsdr-tool eeprom [--out FILE]
   rtlsdr-tool set-serial <serial> [--write] [--backup FILE]
+  rtlsdr-tool adsb [--ifile FILE] [--raw] [--gain 49.6|auto] [--lat <deg> --lon <deg>] [--seconds N]
+  rtlsdr-tool uat [--ifile FILE | --frames FILE] [--raw] [--nexrad DIR] [--gain 49.6|auto] [--seconds N]
+  rtlsdr-tool ism [--ifile FILE] [--freq 433.92e6] [--rate 250000] [--json] [--protocols 2,12,...] [--fsk classic|minmax]
+                  [--analyze] [--codes] [--list-protocols] [--gain auto|<dB>] [--seconds N]
+  rtlsdr-tool ism --code '[19]{36}b5a8f0470' [--json]
+  rtlsdr-tool meteor [--soft FILE | --ifile FILE] [--rate 288000] [--freq 137.9e6] [--mode oqpsk|qpsk] [--out DIR]
+                     [--web PORT [--host 127.0.0.1] [--speed 1]] [--cadu FILE] [--write-soft FILE] [--gain 40.2] [--seconds N]
+  rtlsdr-tool sonde [--wav FILE | --ifile FILE [--rate 240000] [--offset <Hz>] | --freq <Hz>] [--json] [--verbose] [--gain auto|<dB>] [--seconds N]
+  rtlsdr-tool sonde --scan [--from 400e6 --to 406e6] [--dwell 3] [--threshold 8] [--json] [--verbose] [--gain 40.2]
   rtlsdr-tool serve [--address 127.0.0.1] [--port 1234] [--rate 2048000] [--freq 100e6] [--gain auto|<dB>] [--allow-bias-tee] [--fast]
 
   every command: [--device <index> | --serial <serial>]
@@ -114,6 +123,20 @@ case "set-serial":
 
 case "serve":
     serve(arguments)
+
+case "adsb":
+    adsb(arguments)
+
+case "uat":
+    uat(arguments)
+
+case "ism":
+    ism(arguments)
+
+case "meteor":
+    meteor(arguments)
+case "sonde":
+    sonde(arguments)
 
 default:
     print(usage)

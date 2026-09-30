@@ -93,6 +93,42 @@ hardware: try it first on a dongle you can afford to lose.
 client at a time and drops the oldest samples if a client falls behind. Bias-tee commands are refused unless allowed.
 It listens on 127.0.0.1 by default, because the protocol has no authentication.
 
+### Decoders (`RTLSDRDecoders`)
+
+ADS-B / Mode S on 1090 MHz; UAT on 978 MHz (US general aviation) including FIS-B weather: NEXRAD radar mosaics
+rendered to PNG, METAR/TAF/winds-aloft text; 433/868/915 MHz sensors the way rtl_433 decodes them (weather
+stations, thermometers, remotes: AcuRite, Oregon Scientific, LaCrosse, Fine Offset/Ecowitt, Bresser and others); and
+Meteor-M weather-satellite images on 137 MHz (LRPT, QPSK and offset QPSK), with a live dashboard in the browser; and
+Vaisala RS41 radiosondes on 400-406 MHz (position, altitude, velocity, temperature), found by scanning or on a given
+frequency. `rtlsdr-tool adsb`, `uat`, `ism`, `meteor` and `sonde` run them live or on recorded I/Q, with output
+compatible with dump1090, dump978, rtl_433, meteor_decode and rs41mod. How they were checked, and against what: [docs/DECODERS.md](docs/DECODERS.md).
+
+```swift
+import RTLSDRDecoders
+let modeS = ModeSDemodulator()          // u8 I/Q at 2 MS/s
+let tracker = AircraftTracker()
+for frame in modeS.process(block) { tracker.update(frame.message, at: now) }
+
+let uat = UATDemodulator()              // u8 I/Q at 2.083334 MS/s
+for frame in uat.process(block) where frame.kind == .uplink {
+    for product in (UATUplinkMessage(payload: frame.payload).informationFrames ?? []).compactMap(\.fisb) {
+        let radar = NEXRADBlock.blocks(in: product)          // weather radar
+        let text = product.reports                           // METAR, TAF, ...
+    }
+}
+
+let sensors = ISMReceiver()             // u8 I/Q at 250 kS/s, tuned to 433.92 MHz
+for event in sensors.process(block) { print(event.report.json()) }   // {"model" : "Acurite-Tower", ...}
+
+let meteor = LRPTDemodulator(sampleRate: 288_000, offset: true)       // Meteor-M N2-3/N2-4 on 137.9 MHz
+let lrpt = LRPTDecoder(mode: .oqpskNRZM)
+lrpt.process(soft: meteor.process(block))
+let picture = lrpt.imager.composite()?.png                            // RGB from the MSU-MR channels
+
+let sonde = RS41Receiver(sampleRate: 240_000, offsetHz: 40_000)        // an RS41 40 kHz above the tuned frequency
+for event in sonde.process(iq: block) { print(event.report?.json() ?? "") }   // {"type": "RS41", "frame": 3172, ...}
+```
+
 ### Command-line tool
 
 ```
@@ -106,7 +142,15 @@ swift run rtlsdr-tool scan --from 400e6 --to 406e6 --csv spectrum.csv # sweep an
 swift run rtlsdr-tool eeprom --out backup.bin                         # show (and back up) the EEPROM
 swift run rtlsdr-tool set-serial ROOF-01 --device 1                   # dry run; add --write to program it
 swift run rtlsdr-tool serve --address 0.0.0.0                         # rtl_tcp server on port 1234
+swift run -c release rtlsdr-tool adsb --lat 37.4 --lon -122.1         # aircraft on 1090 MHz
+swift run -c release rtlsdr-tool uat --nexrad radar/                  # 978 MHz: aircraft, weather text, radar PNGs
+swift run -c release rtlsdr-tool ism --json                           # 433.92 MHz sensors, rtl_433's JSON
+swift run -c release rtlsdr-tool meteor --web 8080 --out pass/        # Meteor-M images, live at localhost:8080
+swift run -c release rtlsdr-tool sonde --scan --json                  # radiosondes on 400-406 MHz
 ```
+
+Use a release build for the decoders: a debug build decodes ADS-B at about half real speed (it then drops blocks and
+says so), a release build at about eight times real speed.
 
 Every command takes `--device <index>` (as `list` numbers them) or `--serial <serial>`.
 
@@ -128,6 +172,8 @@ so everything but `IOUSBHostTransport` is compiled and tested).
 * The gain loop is tested as pure logic, including a closed-loop simulation; the scanner against a synthetic receiver
   (carriers, noise, DC offset, 8-bit quantisation); EEPROM writing against an emulated EEPROM; the server over a real
   loopback socket.
+* The decoders are checked against published messages, an independent decoder (pyModeS), dump978's real sample frames
+  and its own decoder, and dump1090/dump978 on the same synthetic signals: see [docs/DECODERS.md](docs/DECODERS.md).
 * `Tools/generate-tables.py <librtlsdr source dir> --check` verifies the two generated tables against the reference.
 
 To trace a real session: `RTLSDR_TRACE=/path/to/file` (or `-` for stderr) makes the driver log every control transfer.
@@ -146,8 +192,8 @@ antenna, the bias tee on a dongle that has one, any other dongle model or tuner 
 other than 27, hot-plug, and using several dongles at once. Retuning takes about 27 ms, which limits scan speed.
 
 Also not verified on hardware: everything added on 2026-09-30 (retune shortcuts, overload guard / host AGC, scanning,
-EEPROM writing and serial provisioning, the `rtl_tcp` server). It was built and tested on Linux only; the macOS build
-of those parts has not been compiled yet.
+EEPROM writing and serial provisioning, the `rtl_tcp` server, the ADS-B, UAT, ISM, Meteor-M and RS41 decoders). It was built and tested on
+Linux only; the macOS build of those parts has not been compiled yet.
 
 ## Requirements
 
