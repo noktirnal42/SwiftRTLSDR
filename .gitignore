@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+*.u8
+*.o
+*.dylib
+.DS_Store

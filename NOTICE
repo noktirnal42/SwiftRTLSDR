@@ -1,0 +1,21 @@
+SwiftRTLSDR
+Licensed under the GNU General Public License, version 2 or (at your option) any later version. See LICENSE.
+
+This driver is a Swift port of, and is verified against, the following GPL-2.0-or-later work. Its copyright
+notices are reproduced here as the license requires. See PROVENANCE.md for exactly what was taken from where.
+
+  rtl-sdr (librtlsdr) - "turns your Realtek RTL2832 based DVB dongle into a SDR receiver"
+    Copyright (C) 2012-2014 Steve Markgraf <steve@steve-m.de>
+    Copyright (C) 2012 Dimitri Stolnikov <horiz0n@gmx.net>
+    https://gitea.osmocom.org/sdr/rtl-sdr  (mirror: https://github.com/osmocom/rtl-sdr)
+
+  Rafael Micro R820T/R828D driver (src/tuner_r82xx.c in rtl-sdr), itself
+  "a heavily modified version of the driver found in the Linux kernel" (drivers/media/tuners/r820t.c)
+    Copyright (C) 2013 Mauro Carvalho Chehab <mchehab@redhat.com>
+    Copyright (C) 2013 Steve Markgraf <steve@steve-m.de>
+
+The Swift code, the IOUSBHost transport, the tests and the tooling are new work by the SwiftRTLSDR contributors,
+under the same license.
+
+"Realtek", "RTL2832U", "Rafael Micro", "R820T", "RTL-SDR" and other names are the property of their owners. This project
+is not affiliated with, endorsed by, or supported by any of them.
