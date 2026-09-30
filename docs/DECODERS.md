@@ -56,6 +56,11 @@ recorded frames. The on-air checks are listed in [HARDWARE.md](../HARDWARE.md).
   this package's encoder) and modulates them as continuous-phase FSK (modulation index 0.6) with random timing, carrier
   phase and ±40 kHz frequency offset, at five noise levels. Two runs: this decoder's output was **byte-identical to
   dump978's**, repair counts included (213 and 208 frames of 300; no false frames).
+* **Deliberate differences from dump978**, each where dump978 looks wrong and the sample data cannot tell: aircraft
+  size uses the DO-282B table (dump978 read the length from the wrong bits); FIS-B times with month, day and seconds
+  keep all six bits of the seconds (dump978 masked off the top one); empty-block bitmaps above 60°N step over the
+  ring's wide blocks (dump978's numbering there does not line up with the rings). None of these occurs in the sample
+  data, so the byte-for-byte comparisons above are unaffected, and none has been checked on air.
 * **What real data did not cover:** the sample recording has no rain (every radar bin is intensity 0), so colour
   rendering is covered by a synthetic test only; there were no CONUS mosaics (product 64) in it either.
 
