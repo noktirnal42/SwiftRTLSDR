@@ -47,6 +47,8 @@ hardware. The command in the right-hand column is the check to run. Please add t
 | EEPROM read | Matches `rtl_eeprom -r` byte for byte | `rtlsdr-tool eeprom --out ours.bin` |
 | Serial provisioning (EEPROM write) | Only the serial bytes change; read-back verifies; the dongle enumerates with the new serial after replugging. **Use a dongle you can afford to lose** | `rtlsdr-tool set-serial TEST01` (dry run), then `--write` |
 | `rtl_tcp` server | SDR#, GQRX or SDR++ connect, tune and show a live spectrum; a slow network drops data instead of stalling | `rtlsdr-tool serve --address 0.0.0.0` |
+| ADS-B decoder | Aircraft appear with sensible positions and callsigns; compare with dump1090 or an online tracker at the same time; count messages per minute against dump1090 on the same antenna | `rtlsdr-tool adsb --lat <yours> --lon <yours>` (a 1090 MHz antenna helps a lot) |
+| UAT decoder (US only) | Ground-station uplinks decode; METARs match the published ones; radar PNGs match a radar map for the same time | `rtlsdr-tool uat --nexrad radar/` near a UAT ground station |
 
 ## Not tested
 

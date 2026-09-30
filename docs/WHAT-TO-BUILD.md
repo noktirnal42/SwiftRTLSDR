@@ -84,7 +84,8 @@ These are specific to what the measurements in this repo showed.
 | Use | What exists | Note |
 |---|---|---|
 | ISM sensors, TPMS, doorbells (315/345/433/868/915 MHz) | [`rtl_433`](https://github.com/merbanan/rtl_433): a generic receiver, GPLv2, [234 device protocols listed at the time of the source](https://lwn.net/Articles/921497/) | `[exists]` Good source of test vectors for an original decoder |
-| ADS-B aircraft (1090 MHz) | `dump1090`, which uses 2.4 MS/s ([RTL-SDR.com](https://www.rtl-sdr.com/tag/dump1090/)) | `[exists]` |
+| ADS-B aircraft (1090 MHz) | `dump1090`, which uses 2.4 MS/s ([RTL-SDR.com](https://www.rtl-sdr.com/tag/dump1090/)) | `[exists]` A native decoder is in `RTLSDRDecoders` (see [DECODERS.md](DECODERS.md)) |
+| UAT aircraft and FIS-B weather (978 MHz, US only) | `dump978` ([original](https://github.com/mutability/dump978), GPL-2.0-or-later; [FlightAware's](https://github.com/flightaware/dump978), BSD-2-Clause): ADS-B from general aviation, and from ground stations NEXRAD radar mosaics, METAR/TAF text, NOTAMs | `[exists]` Ported into `RTLSDRDecoders` with radar-to-PNG rendering (see [DECODERS.md](DECODERS.md)) |
 | ACARS / VDL2 aircraft data links | `acarsdec`, `dumpvdl2` (main VDL2 channel 136.975 MHz) ([RTL-SDR.com](https://www.rtl-sdr.com/feeding-the-dump1090-aircraft-database-with-vdlm2dec/)) | `[exists]` |
 | Weather satellites | SatDump: Meteor-M LRPT (~137.9 MHz), NOAA HRPT, GOES etc.; automation of passes ([RTL-SDR.com](https://www.rtl-sdr.com/automating-noaa-apt-and-meteor-m2-lrpt-reception-with-satdump-1-1-2/)). The source says APT was not supported in SatDump at that version | `[exists]` GOES/HRPT need more bandwidth and a dish than a whip antenna |
 | Radiosondes (weather balloons) | `radiosonde_auto_rx`: scans for peaks, decodes, uploads to SondeHub ([RTL-SDR.com](https://www.rtl-sdr.com/tracking-radiosondes-with-an-rtl-sdr-and-radiosonde_auto_rx/)) | `[exists]` A scan-then-decode loop is exactly a scanner's job |
@@ -117,7 +118,11 @@ lists the check to run for each.
 2. **Scan-then-decode loop:** the `RTLSDRScan` library (`BandScanner`, `ScanLoop`, `rtlsdr-tool scan`). At 2.4 MS/s each
    hop covers about 1.8 MHz (hops overlap by half), so channels are found by FFT instead of by retuning channel by
    channel.
-3. **Decoders:** not started. `SignalDecoder` is the slot they plug into.
+3. **Decoders:** started, in the `RTLSDRDecoders` library. ADS-B / Mode S (1090 MHz), written from the public description,
+   and UAT (978 MHz) with FIS-B weather radar and text, ported from dump978. Both are checked against oracles
+   ([DECODERS.md](DECODERS.md)); neither has received a real signal. Not started: rtl_433-style sensors, ACARS/VDL2,
+   weather satellites, radiosondes, LoRa. The fixed-frequency decoders do not need the scan loop; `SignalDecoder` is
+   still the slot for decoders that do.
 4. **Unique-serial provisioning:** `RTLSDRDevice.setSerialNumber` and `rtlsdr-tool set-serial` (dry run by default, backup
    first, never writes the header, verified by read-back). Calibration storage in the free area 0x80-0xff is possible
    with `writeEEPROM`, but no record format has been defined yet.

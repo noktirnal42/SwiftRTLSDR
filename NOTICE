@@ -13,10 +13,34 @@ notices are reproduced here as the license requires. See PROVENANCE.md for exact
     Copyright (C) 2012 Steve Markgraf <steve@steve-m.de>
     Copyright (C) 2012-2013 Hoernchen <la@tfc-server.de>
 
+  dump978 - "Experimental demodulator/decoder for 978MHz UAT signals", whose UAT logic RTLSDRDecoders ports
+    Copyright (C) 2015 Oliver Jowett <oliver@mutability.co.uk>
+    https://github.com/mutability/dump978  (GNU GPL version 2 or later)
+
   Rafael Micro R820T/R828D driver (src/tuner_r82xx.c in rtl-sdr), itself
   "a heavily modified version of the driver found in the Linux kernel" (drivers/media/tuners/r820t.c)
     Copyright (C) 2013 Mauro Carvalho Chehab <mchehab@redhat.com>
     Copyright (C) 2013 Steve Markgraf <steve@steve-m.de>
+
+The UAT aircraft size table follows FlightAware's dump978, distributed under this notice:
+
+    Copyright 2015, Oliver Jowett <oliver@mutability.co.uk>
+    Copyright (c) 2019, FlightAware LLC.
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without modification, are permitted provided that
+    the following conditions are met: (1) Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the following disclaimer. (2) Redistributions in binary form must reproduce the above
+    copyright notice, this list of conditions and the following disclaimer in the documentation and/or other
+    materials provided with the distribution.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED
+    WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+    PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+    INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
+    GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+    OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The Swift code, the IOUSBHost transport, the tests and the tooling are new work by the SwiftRTLSDR contributors,
 under the same license.
