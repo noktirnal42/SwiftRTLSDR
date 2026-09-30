@@ -36,6 +36,9 @@ register meanings come from the reference driver's code and comments.
 | NRZ-M decoding for Meteor-M N2-3/N2-4 (on the bits after the Viterbi decoder), CCSDS Reed-Solomon parameters for LRPT (conventional basis, β = α¹¹, first root 112) | SatDump (GPL-3.0, https://github.com/SatDump/SatDump) was read for these format facts only, and the CCSDS TM synchronisation and channel coding standard (131.0-B) for the code | No SatDump code was taken. SatDump 1.2.2, built from Ubuntu's source package `satdump_1.2.2.orig.tar.gz` (SHA-256 `2ab7c6126e426ad79972b274cc380c0bb04c9e755d746d67f3af92c1dd569209`), was run as an oracle (see docs/DECODERS.md). |
 | LRPT test signals and data (`Tools/lrpt-oracle.py`, `Tools/lrpt-encode.py`, `lrpt-scene.cadu`) | Written for this package from the format descriptions above; reedsolo computes the parity | New. The real recording used for comparison (from the YAM2D repository) is not included: it has no licence. |
 | Dashboard (`rtlsdr-tool meteor --web`), HTTP server (`RTLSDRServer/HTTPServer.swift`) | Written for this package | New. SatDump's live view was the prompt for having one; none of its code or layout was used. |
+| RS41 radiosonde frame format (`RTLSDRDecoders/Sonde/RS41Frame.swift`, `RS41Sonde.swift`): whitening sequence, Reed-Solomon parameters and codeword layout, block IDs and field positions, CRC, calibration-table offsets, the temperature model, where subtype, frequency and countdown sit, the JSON output format | rs1729's RS project, GPL-3.0 (https://github.com/rs1729/RS): `rs41/rs41.txt` and `demod/mod/rs41mod.c`, `bch_ecc_mod.c` | Read for these format facts only; the Swift is written for this package and no code was taken (formulas such as Bowring's and the temperature model are implemented from their mathematics). rs41mod is the oracle: every field of its JSON must match on the real recordings (see docs/DECODERS.md). Its recordings, used for that comparison, are not included. |
+| RS41 receiver (`RS41Receiver.swift`): carrier search, channel filter, discriminator, header correlation, bit decisions | Written for this package | New. The ±3.7 kHz channel bandwidth is rs41mod's figure; the approach (spectrum-centre acquisition, Pearson correlation on bit integrals) is not rs41mod's. |
+| RS41 test signals (`Tools/rs41-oracle.py`), comparison (`Tools/sonde-oracle-compare.py`) | Written for this package | New. |
 | Tests, fake dongle, trace logger, CLI, tools | Written for this package | New. |
 | Golden traces | Recorded from an unmodified `rtl_sdr` (Homebrew librtlsdr 2.0.2) on real hardware | Test data: what the reference wrote on the wire. |
 
@@ -65,5 +68,6 @@ Nothing from `libusb`, from the RTL-SDR Blog fork's changes (V3/V4 support, VCO-
 `librtlsdr/librtlsdr` community fork (harmonic reception, extra gain stages), or from `rtl_power`/`rtl_fm`.
 Those were read for background only (see LEVEL-DIFFERENCES.md for what was learned and cited). rtl_433 is the source of
 the ISM decoders, and dbdexter-dev's programs of the LRPT decoder, as listed above, but nothing of them is in the driver
-itself. Other Meteor projects were searched for test recordings only (MeteorDemod, meteor_decoder, weatherdump, YAM2D);
+itself. radiosonde_auto_rx (GPL-3.0) was the model for what `sonde --scan` does, not read for code. Other Meteor
+projects were searched for test recordings only (MeteorDemod, meteor_decoder, weatherdump, YAM2D);
 none contributed code, and the one recording used (YAM2D's) is not included.

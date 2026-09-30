@@ -6,13 +6,13 @@ nothing (not even RTLSDRKit): feed it u8 I/Q from the dongle, from a file, or fr
 published messages and recordings made with other receivers. The on-air checks are listed in
 [HARDWARE.md](../HARDWARE.md).
 
-| | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT |
-|---|---|---|---|---|
-| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) |
-| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each |
-| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only |
-| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--web PORT]` |
-| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) |
+| | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT | Radiosondes |
+|---|---|---|---|---|---|
+| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) | 400-406 MHz, 240 kS/s (any rate from 48 kS/s), or FM audio |
+| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41 weather balloons: position, altitude, velocity, temperature, serial, battery, burst-kill countdown |
+| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame format as rs1729's RS project documents it (GPL-3.0, read for format facts only); its rs41mod as oracle |
+| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--web PORT]` | `rtlsdr-tool sonde [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` |
+| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod `--json` (the JSON lines radiosonde_auto_rx reads) |
 
 ## How they were checked
 
@@ -187,18 +187,70 @@ coarse estimate marked; a ribbon of every frame (clean, repaired, lost); SNR and
 lock shaded; and packets per APID. Server-Sent Events push the numbers five times a second; image rows are fetched as
 PNG strips once every channel shown has them complete.
 
+### Radiosondes (Vaisala RS41)
+
+The RS41 sends one 320-byte frame a second at 4800 bit/s (GFSK): whitened, protected by two interleaved Reed-Solomon
+(255,231) codewords, and split into blocks with CRCs (status and a 16-byte piece of the calibration table, PTU counts,
+GPS time, GPS position and velocity). The frame layer follows the format as rs1729's RS project documents it (its notes
+and its decoder rs41mod, GPL-3.0, read for these facts only); the receiver is this package's own:
+
+* **Channel.** An oscillator moves the sonde to zero, a boxcar decimates to about 48 kHz, a ±3.7 kHz low-pass (the
+  bandwidth rs41mod uses on real sondes) keeps the signal, and a discriminator gives its frequency. A filter that
+  narrow needs the carrier found first (a dongle's crystal alone can be 20 kHz off at 403 MHz): the decimated spectrum
+  is averaged over half a second and the receiver moves to the centre of the power standing above the noise, and each
+  clear header after that fine-tunes it. The filter was the difference between failing and beating rs41mod: at
+  ±12 kHz the discriminator ran below its threshold and no frame decoded at Eb/N0 10 dB.
+* **Frames.** The header is found by a Pearson correlation of its 64 bits with bit integrals (taken from a running sum,
+  so any sample rate works; offset, level and polarity drop out), refined to a quarter sample; the frame's bits are
+  read at that timing against the frame's own mean. A frame the code cannot repair gets a second try with the bytes
+  known in advance written in (block IDs and lengths, the padding block), as rs41mod's `--ecc2` does.
+* **Values.** WGS84 position by Bowring's method, velocity over ground from the ECEF velocity, GPS time as sent (no leap
+  seconds, as rs41mod prints it and radiosonde_auto_rx expects), temperature from the sensor and reference counts with
+  the calibration table once its pieces have arrived (up to 51 s), subtype, transmit frequency and burst-kill
+  countdown from their pieces.
+
+How it was checked:
+
+* **Real recordings** (FM audio, 48 kHz: `rs41pre_20150802.wav` and `20140717_402MHz.wav` from
+  [rs1729/RS](https://github.com/rs1729/RS); not included, that repository is GPL-3.0). All 180 frames decode, and every
+  field of every JSON line equals rs41mod's (`Tools/sonde-oracle-compare.py`: position and velocity to the 5 decimals
+  printed, temperature to 0.1 °C, time, serial, subtype, frequency and countdown exactly).
+* **Synthetic I/Q from those real frames.** `Tools/rs41-oracle.py` whitens them again and sends them with its own GFSK
+  modulator (BT 0.5, ±2.4 kHz), a carrier offset, noise for the Eb/N0 asked for, 240 kS/s; rs41mod gets the same signal
+  as an I/Q WAV (`--IQ`, told the exact carrier frequency), this receiver starts listening at 0 Hz. Reports of 120:
+
+  | | 12 dB | 10 dB | 9 dB | 8 dB | 7 dB | 11 dB, carrier −8 → −4 kHz | 11 dB, +15 kHz |
+  |---|---|---|---|---|---|---|---|
+  | this receiver | 119 | 119 | 119 | 81 | 0 | 119 | 119 |
+  | rs41mod | 120 | 120 | 118 | 27 | 0 | 35 | 120 |
+
+  The frame this receiver loses in every column is the first, while the carrier search takes its first half second;
+  rs41mod's losses on the drifting carrier are where it sat off the signal. Every report was compared with rs41mod's
+  decode of the original recording: none has a wrong field. 15 s of noise gave no report. A 2.4 MS/s capture with
+  the sonde 600 kHz off-centre and 3 kHz from where it was expected (what a scan dwell gives) decodes too.
+* **Unit tests**: the whitening sequence against its shift-register recurrence; the CRC's check value; Reed-Solomon
+  parity against reedsolo, 12 errors per codeword repaired, and the second try with known bytes; frames built field by
+  field (a known position, velocity and GPS time; a calibration table with known resistors and coefficients giving a
+  temperature worked out independently; subtype, frequency and countdown); the receiver on a signal from a GFSK
+  modulator written in the test, 4 kHz off, from I/Q and from FM audio of the opposite polarity; noise alone.
+* **Not done:** humidity and pressure (rs41mod's formulas for them are partly empirical and were not taken), extended
+  frames' XDATA (ozone sondes and the like), the other sonde types radiosonde_auto_rx knows (DFM, M10/M20, RS92, iMet,
+  …), uploading to SondeHub, and following one sonde continuously once `--scan` has found it (the scan loop revisits
+  every sonde each round, a position every 15 s or so).
+
 ## Speed
 
 Decoding the oracle recordings on one core of the Linux build machine: ADS-B 2.4 s of signal in 0.29 s (release build)
 or 4.5 s (debug build); UAT 1.17 s of signal in 0.04 s (release) or 0.84 s (debug); ISM 122 s of signal in 0.74 s
 (release; rtl_433 takes 0.44 s); Meteor-M LRPT 36 s of I/Q in 1.8 s (release, to images; meteor_demod's
-demodulation alone takes 0.74 s) or 35 s of soft symbols in 0.5 s. Live, a decoder that falls behind
+demodulation alone takes 0.74 s) or 35 s of soft symbols in 0.5 s; RS41 120 s of I/Q at 240 kS/s in 1.2 s, or of FM audio in 0.4 s. Live, a decoder
+that falls behind
 drops whole blocks and reports it rather than queueing without limit, so use a release build for ADS-B.
 
 ## Rerunning the comparisons
 
-The oracles need dump1090-mutability, dump978, rtl_433, meteor_demod, SatDump and a few Python packages; none of that is
-needed for `swift test`.
+The oracles need dump1090-mutability, dump978, rtl_433, meteor_demod, SatDump, rs41mod and a few Python packages; none of
+that is needed for `swift test`.
 
 ```
 Tools/modes-oracle.py 7 /tmp/modes                        # numpy
@@ -220,4 +272,10 @@ Tools/lrpt-oracle.py scene.cadu scene.u8 --mode oqpsk --offset -800 --doppler 25
 rtlsdr-tool meteor --ifile scene.u8 --mode oqpsk --out ours --cadu ours.cadu                  # compare with scene.cadu, scene/
 meteor_demod -B -s 288000 --bps 8 -m oqpsk -o md.s scene.u8 && rtlsdr-tool meteor --soft md.s --mode oqpsk
 satdump meteor_m2-x_lrpt baseband scene.u8 sd --samplerate 288000 --baseband_format cu8
+
+git clone https://github.com/rs1729/RS && (cd RS/demod/mod && gcc -c demod_mod.c bch_ecc_mod.c && gcc rs41mod.c demod_mod.o bch_ecc_mod.o -lm -o rs41mod)
+Tools/sonde-oracle-compare.py RS/demod/mod/rs41mod rtlsdr-tool RS/rs41/wav/*.wav --invert
+RS/demod/mod/rs41mod -i --ecc2 -r RS/rs41/wav/20140717_402MHz.wav > frames.txt              # dewhitened frames
+Tools/rs41-oracle.py frames.txt sonde --ebn0 9 --offset 3000                              # numpy
+rtlsdr-tool sonde --ifile sonde.u8 --json; RS/demod/mod/rs41mod --IQ 0.0125 --lpIQ --ecc2 --json sonde.wav
 ```
