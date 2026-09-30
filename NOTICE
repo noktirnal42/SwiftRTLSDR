@@ -9,6 +9,10 @@ notices are reproduced here as the license requires. See PROVENANCE.md for exact
     Copyright (C) 2012 Dimitri Stolnikov <horiz0n@gmx.net>
     https://gitea.osmocom.org/sdr/rtl-sdr  (mirror: https://github.com/osmocom/rtl-sdr)
 
+  rtl_tcp (src/rtl_tcp.c in rtl-sdr), whose wire protocol RTLSDRServer implements
+    Copyright (C) 2012 Steve Markgraf <steve@steve-m.de>
+    Copyright (C) 2012-2013 Hoernchen <la@tfc-server.de>
+
   Rafael Micro R820T/R828D driver (src/tuner_r82xx.c in rtl-sdr), itself
   "a heavily modified version of the driver found in the Linux kernel" (drivers/media/tuners/r820t.c)
     Copyright (C) 2013 Mauro Carvalho Chehab <mchehab@redhat.com>

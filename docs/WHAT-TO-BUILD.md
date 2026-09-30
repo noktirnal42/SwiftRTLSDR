@@ -102,3 +102,23 @@ using `rtl_433`, `dump1090`, `acarsdec`, `dumpvdl2` and SatDump as **test oracle
 differ; check before copying anything); (4) unique-serial provisioning once there is more than one dongle; (5) a network
 server for a dongle at the antenna. Coherent arrays, direct sampling and the V4 depend on hardware this driver has not been
 tested with and should wait for someone who owns it.
+
+### Status (2026-09-30)
+
+What exists now for each item above. Everything listed is tested without hardware only; [HARDWARE.md](../HARDWARE.md)
+lists the check to run for each.
+
+1. **Fast retune:** opt-in `RTLSDRDevice.RetuneShortcuts` cut a same-band retune from 11 control transfers to 5 (keep
+   the tuner's I2C bus open; reuse the VCO status from the last lock check). The mux and filter registers were already
+   skipped when the band did not change. The time saved is unmeasured (`rtlsdr-tool retunebench`). Not done:
+   pipelining control transfers asynchronously in the USB layer, which could save more but needs a macOS build to
+   write against. **Overload guard / software AGC:** `SampleStatistics`, `GainLoop` and `HostGainControl`
+   (`rtlsdr-tool monitor --guard`, `--agc`). The thresholds are unmeasured starting points.
+2. **Scan-then-decode loop:** the `RTLSDRScan` library (`BandScanner`, `ScanLoop`, `rtlsdr-tool scan`). At 2.4 MS/s each
+   hop covers about 1.8 MHz (hops overlap by half), so channels are found by FFT instead of by retuning channel by
+   channel.
+3. **Decoders:** not started. `SignalDecoder` is the slot they plug into.
+4. **Unique-serial provisioning:** `RTLSDRDevice.setSerialNumber` and `rtlsdr-tool set-serial` (dry run by default, backup
+   first, never writes the header, verified by read-back). Calibration storage in the free area 0x80-0xff is possible
+   with `writeEEPROM`, but no record format has been defined yet.
+5. **Network server:** the `RTLSDRServer` library (`rtl_tcp` protocol, `rtlsdr-tool serve`).

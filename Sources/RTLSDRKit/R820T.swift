@@ -37,6 +37,12 @@ final class R820T {
     /// Which of the VCO's sub-bands the autotune settled on (status register 2, bits 5...0). Adjacent codes can differ in output level.
     private(set) var vcoBandCode = 0
 
+    /// Take the VCO fine-tune bits for a frequency change from the previous lock check (which then reads five status
+    /// bytes instead of three) instead of reading the status again first. A retune shortcut; the reference reads again.
+    var reusesVCOStatus = false { didSet { lastFineTune = nil } }
+    /// The fine-tune bits seen when the PLL last locked, while `reusesVCOStatus` is on; nil means "read them".
+    private var lastFineTune: UInt8?
+
     /// Tells the tuner what its reference crystal really runs at (applies to the next frequency change).
     func setCrystalFrequency(_ hertz: UInt64) { crystalHz = hertz }
 
@@ -97,6 +103,7 @@ final class R820T {
 
     func initialize() throws {
         crystalCap = .high0pF
+        lastFineTune = nil
         shadow = [UInt8](repeating: 0, count: Self.shadowCount)
         // The table has 27 values; like the reference driver, write zeros to the reserved registers after them.
         let padding = [UInt8](repeating: 0, count: Self.shadowCount - R820TTables.initialRegisters.count)
@@ -171,6 +178,7 @@ final class R820T {
     }
 
     func standby() throws {
+        lastFineTune = nil
         try write(0x06, value: 0xb1)
         try write(0x05, value: 0xa0)
         try write(0x07, value: 0x3a)
@@ -274,24 +282,31 @@ final class R820T {
         try write(0x1a, value: 0x00, mask: 0x0c)                  // autotune step 128 kHz
 
         let current = Array(shadow[(0x10 - Self.shadowStart)..<(0x10 - Self.shadowStart + 7)])
-        // The VCO fine-tune bits decide whether the divider is nudged, so read them before computing.
-        let status = try read(0x00, count: 5)
-        let fineTune = (status[4] & 0x30) >> 4
+        // The VCO fine-tune bits decide whether the divider is nudged, so they are needed before computing.
+        let fineTune: UInt8
+        if reusesVCOStatus, let cached = lastFineTune {
+            fineTune = cached
+        } else {
+            let status = try read(0x00, count: 5)
+            fineTune = (status[4] & 0x30) >> 4
+        }
+        lastFineTune = nil
         guard let plan = Self.planPLL(loFrequencyHz: frequencyHz, crystalHz: crystalHz, currentRegisters: current, vcoFineTune: fineTune) else {
             throw RTLSDRError.pllOutOfRange(frequencyHz: Int(frequencyHz))
         }
         try write(0x10, plan.registers)
 
         var locked = false
-        var lock: [UInt8] = [0, 0, 0]
+        var lock: [UInt8] = [0, 0, 0, 0, 0]
         for attempt in 0..<2 {
-            lock = try read(0x00, count: 3)
+            lock = try read(0x00, count: reusesVCOStatus ? 5 : 3)
             if lock[2] & 0x40 != 0 { locked = true; break }
             if attempt == 0 { try write(0x12, value: 0x60, mask: 0xe0) }   // not locked: more VCO current
         }
         pllLocked = locked
         vcoBandCode = Int(lock[2] & 0x3f)
         guard locked else { return }
+        if reusesVCOStatus { lastFineTune = (lock[4] & 0x30) >> 4 }
         try write(0x1a, value: 0x08, mask: 0x08)                  // autotune step 8 kHz
     }
 

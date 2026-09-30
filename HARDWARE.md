@@ -33,6 +33,21 @@ trace or capture that supports them) if you test something else.
 | ppm correction | Register state identical to `rtl_sdr` at 5 ppm; the effect on a real signal was not measured |
 | Sandboxed app use | Not yet tested at the time of writing (needs the USB entitlement) |
 
+## Added 2026-09-30, not yet run on any dongle
+
+Each of these passes its tests against the fake dongle, synthetic signals or a loopback socket. None has touched
+hardware. The command in the right-hand column is the check to run. Please add the result here.
+
+| Feature | What to check | Command |
+|---|---|---|
+| Retune shortcuts (`setRetuneShortcuts(.all)`) | Lock at every point as before; retune time against the 27 ms baseline; that received level and spurs are unchanged with the I2C repeater left on | `rtlsdr-tool lockscan --fast`, `rtlsdr-tool retunebench`, `rtlsdr-tool retunebench --streaming`, `capture` with and without `--fast` |
+| Overload guard / host AGC | Gain backs off on a strong signal and returns; no hunting; thresholds sensible for real signals | `rtlsdr-tool monitor --freq <strong station> --guard --gain 49.6`, `... --agc -25` |
+| Oscillator settling after a retune | The scanner discards 2 ms after each retune; that figure is a guess | `rtlsdr-tool scan` with a known carrier, varying the settle time in code |
+| Band scan | Known carriers found at the right frequency; no false detections at hop centres (DC) or hop edges | `rtlsdr-tool scan --from 88e6 --to 108e6` (FM broadcast), `--csv` to inspect |
+| EEPROM read | Matches `rtl_eeprom -r` byte for byte | `rtlsdr-tool eeprom --out ours.bin` |
+| Serial provisioning (EEPROM write) | Only the serial bytes change; read-back verifies; the dongle enumerates with the new serial after replugging. **Use a dongle you can afford to lose** | `rtlsdr-tool set-serial TEST01` (dry run), then `--write` |
+| `rtl_tcp` server | SDR#, GQRX or SDR++ connect, tune and show a live spectrum; a slow network drops data instead of stalling | `rtlsdr-tool serve --address 0.0.0.0` |
+
 ## Not tested
 
 * Any other dongle: RTL-SDR Blog V3 (bias tee is driven on GPIO 0 but was only exercised against the fake dongle),
@@ -46,5 +61,6 @@ trace or capture that supports them) if you test something else.
 ## Known limits
 
 * One process per dongle (the OS gives the device to whoever opens it first).
-* Retuning is slow (~27 ms) because every retune is many single control transfers; fast scanning will need batching.
+* Retuning is slow (~27 ms) because every retune is many single control transfers. The opt-in retune shortcuts cut a
+  same-band retune from 11 transfers to 5; how much time that saves is unmeasured.
 * Only the R820T. `open` on anything else throws `unsupportedTuner` and gives the USB device back.

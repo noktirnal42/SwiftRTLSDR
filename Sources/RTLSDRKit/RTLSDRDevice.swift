@@ -11,7 +11,9 @@ import Foundation
 ///     try device.setAutomaticGain()
 ///     try device.startStreaming { samples in /* interleaved unsigned 8-bit I, Q, I, Q ... */ }
 ///
-/// Not thread-safe for configuration: call the setters from one thread at a time (streaming runs on its own thread).
+/// Thread-safe: settings can be changed from any thread (calls are serialised, one control sequence at a time), which
+/// lets a gain loop or a network client adjust a stream that someone else started. The streaming handler runs on its
+/// own queue and must not call back into the device.
 public final class RTLSDRDevice: @unchecked Sendable {
 
     public enum Tuner: String, Sendable { case r820t = "Rafael Micro R820T" }
@@ -23,23 +25,57 @@ public final class RTLSDRDevice: @unchecked Sendable {
     /// The gain settings the tuner offers, in tenths of a dB (so 496 = 49.6 dB).
     public static var supportedGainsTenthsDB: [Int] { R820T.gainSteps }
 
+    /// Ways to make a retune cheaper than the reference driver's sequence, which costs 11 control transfers when the
+    /// band does not change. None is on by default. **Neither has been tried on hardware yet**: measure lock and
+    /// retune time with `rtlsdr-tool retunebench` before relying on them.
+    public struct RetuneShortcuts: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+
+        /// Leave the RTL2832U's I2C repeater (the gate to the tuner's bus) on between tuner accesses instead of
+        /// switching it on and off around each one. Saves 4 transfers per retune. The reference always switches it off
+        /// again; whether leaving it on affects reception is not known.
+        public static let keepTunerBusOpen = RetuneShortcuts(rawValue: 1 << 0)
+        /// Take the VCO fine-tune bits that choose the PLL divider from the previous retune's lock check instead of
+        /// reading the tuner's status again first. Saves 2 transfers per retune. Differs from the reference only if
+        /// those bits change between the lock and the next retune.
+        public static let reuseVCOStatus = RetuneShortcuts(rawValue: 1 << 1)
+
+        public static let all: RetuneShortcuts = [.keepTunerBusOpen, .reuseVCOStatus]
+    }
+
     public let info: RTLSDRDeviceInfo?
     public let tuner: Tuner
 
-    public private(set) var sampleRate: Double = 0
-    public private(set) var centerFrequency: Int = 0
+    /// What the setters last established. Read and written only under `controlLock`.
+    private struct Settings {
+        var sampleRate: Double = 0
+        var centerFrequency = 0
+        var tunerGainTenthsDB: Int?
+        var frequencyCorrectionPPM = 0
+        var pllLocked = true
+        var tunerVCOBandCode = 0
+        var retuneShortcuts: RetuneShortcuts = []
+    }
+    private var settings = Settings()
+
+    public var sampleRate: Double { withLock { settings.sampleRate } }
+    public var centerFrequency: Int { withLock { settings.centerFrequency } }
     /// nil while automatic gain is on.
-    public private(set) var tunerGainTenthsDB: Int?
-    public private(set) var frequencyCorrectionPPM: Int = 0
+    public var tunerGainTenthsDB: Int? { withLock { settings.tunerGainTenthsDB } }
+    public var frequencyCorrectionPPM: Int { withLock { settings.frequencyCorrectionPPM } }
     /// False if the last retune could not lock the oscillator (samples are then off-frequency).
-    public private(set) var pllLocked = true
+    public var pllLocked: Bool { withLock { settings.pllLocked } }
     /// The tuner oscillator's sub-band after the last retune (a diagnostic; see the README on level differences).
-    public private(set) var tunerVCOBandCode = 0
+    public var tunerVCOBandCode: Int { withLock { settings.tunerVCOBandCode } }
+    public var retuneShortcuts: RetuneShortcuts { withLock { settings.retuneShortcuts } }
 
     private let transport: RTLSDRTransport
-    private let chip: RTL2832U
+    let chip: RTL2832U
     private let r820t: R820T
-    private let stateLock = NSLock()
+    /// Serialises every control-transfer sequence and guards `settings` and `closed`. Recursive because some public
+    /// calls are built from others.
+    private let controlLock = NSRecursiveLock()
     private var closed = false
 
     // MARK: Opening
@@ -53,6 +89,14 @@ public final class RTLSDRDevice: @unchecked Sendable {
     public static func open(_ info: RTLSDRDeviceInfo) throws -> RTLSDRDevice {
         try RTLSDRDevice(transport: TracingTransport.fromEnvironment(IOUSBHostTransport(info: info)), info: info)
     }
+    #else
+    /// The only USB backend is macOS's IOUSBHost; elsewhere the package builds (so its logic can be tested) but finds no dongles.
+    public static func connectedDevices() -> [RTLSDRDeviceInfo] { [] }
+
+    public static func open(_ info: RTLSDRDeviceInfo) throws -> RTLSDRDevice {
+        throw RTLSDRError.openFailed("this platform has no USB backend (only macOS's IOUSBHost is implemented)")
+    }
+    #endif
 
     /// Opens the dongle with `serial`, or the first one when `serial` is nil.
     public static func openFirst(serial: String? = nil) throws -> RTLSDRDevice {
@@ -64,7 +108,6 @@ public final class RTLSDRDevice: @unchecked Sendable {
         }
         return try open(devices[0])
     }
-    #endif
 
     /// Starts a session on an already-open transport (used by tests, and by anything that brings its own USB layer).
     init(transport: RTLSDRTransport, info: RTLSDRDeviceInfo? = nil) throws {
@@ -96,66 +139,111 @@ public final class RTLSDRDevice: @unchecked Sendable {
 
     deinit { close() }
 
+    // MARK: Serialisation
+
+    private func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        controlLock.lock()
+        defer { controlLock.unlock() }
+        return try body()
+    }
+
+    /// Runs a control sequence with the device to itself; refuses once the device is closed.
+    func withControl<T>(_ body: () throws -> T) throws -> T {
+        try withLock {
+            guard !closed else { throw RTLSDRError.closed }
+            return try body()
+        }
+    }
+
     // MARK: Settings
 
     /// Sets the sample rate; returns the rate actually produced (it is derived from the 28.8 MHz crystal).
     @discardableResult
     public func setSampleRate(_ rate: Int) throws -> Double {
         guard RTL2832U.resamplerSettings(sampleRate: rate) != nil else { throw RTLSDRError.invalidSampleRate(rate) }
-        // The tuner's IF filter follows the sample rate; the demodulator then has to mix the new IF to zero.
-        let intermediate = try chip.withI2CRepeater { try r820t.setBandwidth(rate) }
-        try chip.setIntermediateFrequency(intermediate)
-        if centerFrequency > 0 { try retune() }
-        let actual = try chip.setSampleRate(rate, correctionPPM: frequencyCorrectionPPM)
-        sampleRate = actual
-        return actual
+        return try withControl {
+            // The tuner's IF filter follows the sample rate; the demodulator then has to mix the new IF to zero.
+            let intermediate = try chip.withI2CRepeater { try r820t.setBandwidth(rate) }
+            try chip.setIntermediateFrequency(intermediate)
+            if settings.centerFrequency > 0 { try retune() }
+            let actual = try chip.setSampleRate(rate, correctionPPM: settings.frequencyCorrectionPPM)
+            settings.sampleRate = actual
+            return actual
+        }
     }
 
     public func setCenterFrequency(_ hertz: Int) throws {
         guard Self.tunableRange.contains(hertz) else { throw RTLSDRError.frequencyOutOfRange(hertz) }
-        centerFrequency = hertz
-        try retune()
+        try withControl {
+            settings.centerFrequency = hertz
+            try retune()
+        }
     }
 
+    /// Caller holds `controlLock`.
     private func retune() throws {
-        try chip.withI2CRepeater { try r820t.setFrequency(centerFrequency) }
-        pllLocked = r820t.pllLocked
-        tunerVCOBandCode = r820t.vcoBandCode
+        try chip.withI2CRepeater { try r820t.setFrequency(settings.centerFrequency) }
+        settings.pllLocked = r820t.pllLocked
+        settings.tunerVCOBandCode = r820t.vcoBandCode
+    }
+
+    /// Turns retune shortcuts on or off (see `RetuneShortcuts`). Turning `keepTunerBusOpen` off closes the bus now.
+    public func setRetuneShortcuts(_ shortcuts: RetuneShortcuts) throws {
+        try withControl {
+            try chip.keepRepeaterOn(shortcuts.contains(.keepTunerBusOpen))
+            r820t.reusesVCOStatus = shortcuts.contains(.reuseVCOStatus)
+            settings.retuneShortcuts = shortcuts
+        }
     }
 
     public func setAutomaticGain() throws {
-        try chip.withI2CRepeater { try r820t.setGain(manual: false) }
-        tunerGainTenthsDB = nil
+        try withControl {
+            try chip.withI2CRepeater { try r820t.setGain(manual: false) }
+            settings.tunerGainTenthsDB = nil
+        }
     }
 
     /// Manual gain, in tenths of a dB; the nearest setting the tuner can make is used.
     public func setTunerGain(tenthsDB: Int) throws {
-        try chip.withI2CRepeater { try r820t.setGain(manual: true, gainTenthsDB: tenthsDB) }
-        tunerGainTenthsDB = tenthsDB
+        try withControl {
+            try chip.withI2CRepeater { try r820t.setGain(manual: true, gainTenthsDB: tenthsDB) }
+            settings.tunerGainTenthsDB = tenthsDB
+        }
     }
+
+    /// The corrections the demodulator can hold: its register is 14 bits signed, at 2^24 / 10^6 counts per ppm.
+    public static let frequencyCorrectionRange: ClosedRange<Int> = -488...488
 
     /// Corrects the crystal's error (positive = the crystal runs fast). Takes effect immediately.
     public func setFrequencyCorrection(ppm: Int) throws {
-        try chip.setFrequencyCorrection(ppm: ppm)
-        frequencyCorrectionPPM = ppm
-        // The tuner's oscillator runs from the same crystal, so its PLL arithmetic must use the corrected value.
-        r820t.setCrystalFrequency(UInt64(chip.correctedCrystalHz))
-        if centerFrequency > 0 { try retune() }
+        guard Self.frequencyCorrectionRange.contains(ppm) else { throw RTLSDRError.frequencyCorrectionOutOfRange(ppm) }
+        try withControl {
+            try chip.setFrequencyCorrection(ppm: ppm)
+            settings.frequencyCorrectionPPM = ppm
+            // The tuner's oscillator runs from the same crystal, so its PLL arithmetic must use the corrected value.
+            r820t.setCrystalFrequency(UInt64(chip.correctedCrystalHz))
+            if settings.centerFrequency > 0 { try retune() }
+        }
     }
 
     /// Powers an antenna amplifier through the coax on dongles with a bias tee wired to GPIO 0 (the RTL-SDR Blog V3).
     /// On other dongles this toggles a pin that goes nowhere.
     public func setBiasTee(_ on: Bool) throws {
-        try chip.setGPIOOutput(0)
-        try chip.setGPIO(0, high: on)
+        try withControl {
+            try chip.setGPIOOutput(0)
+            try chip.setGPIO(0, high: on)
+        }
     }
 
     // MARK: Samples
 
-    /// Reads `byteCount` bytes of interleaved unsigned 8-bit I/Q and returns them (not while streaming).
-    public func readSamples(byteCount: Int) throws -> [UInt8] {
+    /// Reads `byteCount` bytes of interleaved unsigned 8-bit I/Q and returns them (not while streaming). The stream
+    /// starts afresh, so every byte was sampled after the call began. Short reads finish sooner with a smaller
+    /// `blockSize` (a multiple of 512), because a block is only delivered once it is full.
+    public func readSamples(byteCount: Int, blockSize: Int = 65_536) throws -> [UInt8] {
         let collector = SampleCollector(target: byteCount)
         try startStreaming(
+            blockSize: blockSize,
             onError: { collector.fail($0) },
             handler: { collector.append($0) }
         )
@@ -168,35 +256,41 @@ public final class RTLSDRDevice: @unchecked Sendable {
     /// Delivers samples (interleaved unsigned 8-bit I, Q, I, Q ...) to `handler` until `stopStreaming()`.
     ///
     /// Blocks are `blockSize` bytes, with `bufferCount` requests kept queued so the dongle's FIFO never overflows.
-    /// `handler` runs on a USB completion queue: return quickly (copy or enqueue the data), never call
-    /// `stopStreaming()` from it, and don't keep the buffer. `onError` fires once if the stream dies by itself.
+    /// `handler` runs on a USB completion queue: return quickly (copy or enqueue the data), never call back into the
+    /// device from it, and don't keep the buffer. `onError` fires once if the stream dies by itself.
     public func startStreaming(
         blockSize: Int = 65_536,
         bufferCount: Int = 8,
         onError: (@Sendable (Error) -> Void)? = nil,
         handler: @escaping @Sendable (UnsafeBufferPointer<UInt8>) -> Void
     ) throws {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard !closed else { throw RTLSDRError.closed }
-        guard !transport.isStreaming else { throw RTLSDRError.alreadyStreaming }
-        try chip.resetStreamBuffer()                       // drop stale samples left in the dongle's FIFO
-        try transport.startBulkStream(bufferSize: blockSize, bufferCount: bufferCount, handler: handler, onError: onError ?? { _ in })
+        try withControl {
+            guard !transport.isStreaming else { throw RTLSDRError.alreadyStreaming }
+            try chip.resetStreamBuffer()                       // drop stale samples left in the dongle's FIFO
+            try transport.startBulkStream(bufferSize: blockSize, bufferCount: bufferCount, handler: handler, onError: onError ?? { _ in })
+        }
     }
+
+    public var isStreaming: Bool { transport.isStreaming }
 
     public func stopStreaming() {
         transport.stopBulkStream()
     }
 
     public func close() {
-        stateLock.lock()
-        guard !closed else { stateLock.unlock(); return }
-        closed = true
-        stateLock.unlock()
+        let first: Bool = withLock {
+            defer { closed = true }
+            return !closed
+        }
+        guard first else { return }
+        // Outside the lock: stopping waits for the last completion, which must not wait on us.
         transport.stopBulkStream()
-        try? chip.withI2CRepeater { try r820t.standby() }
-        try? chip.powerDown()
-        transport.close()
+        withLock {
+            try? chip.withI2CRepeater { try r820t.standby() }
+            try? chip.keepRepeaterOn(false)
+            try? chip.powerDown()
+            transport.close()
+        }
     }
 }
 
