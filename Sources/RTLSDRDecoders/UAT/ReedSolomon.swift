@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /// Reed-Solomon over GF(2^8), shortened to `length` symbols with `parityCount` parity symbols, primitive element 2
-/// and generator roots α^(firstRoot + i) (the primitive step is 1, as UAT uses).
+/// and generator roots β^(firstRoot + i) with β = α^rootStep (UAT: step 1, first root 120; CCSDS, as Meteor-M LRPT
+/// uses it in the conventional basis: step 11, first root 112).
 ///
 /// Written for this package: syndromes, Berlekamp-Massey, Chien search, Forney. It is checked against Phil Karn's
 /// decoder (the one dump978 uses) and against reedsolo's encoder. One deliberate difference: an error located in the
@@ -11,17 +12,19 @@ public struct ReedSolomon: Sendable {
     public let length: Int
     public let parityCount: Int
     public let firstRoot: Int
+    public let rootStep: Int
     public var dataCount: Int { length - parityCount }
 
     private let exp: [UInt8]           // α^i for i in 0..<510 (doubled to skip a modulo)
     private let log: [Int]             // log[x] for x in 1...255; log[0] unused
     private let generator: [UInt8]     // g(x), highest degree first, monic
 
-    public init(length: Int, parityCount: Int, polynomial: Int = 0x187, firstRoot: Int = 120) {
+    public init(length: Int, parityCount: Int, polynomial: Int = 0x187, firstRoot: Int = 120, rootStep: Int = 1) {
         precondition(length <= 255 && parityCount < length, "a shortened code of at most 255 symbols")
         self.length = length
         self.parityCount = parityCount
         self.firstRoot = firstRoot
+        self.rootStep = rootStep
         var exp = [UInt8](repeating: 0, count: 510)
         var log = [Int](repeating: 0, count: 256)
         var x = 1
@@ -35,10 +38,10 @@ public struct ReedSolomon: Sendable {
         self.exp = exp
         self.log = log
 
-        // g(x) = Π (x - α^(firstRoot + i)); in GF(2^8), minus is plus.
+        // g(x) = Π (x - β^(firstRoot + i)); in GF(2^8), minus is plus.
         var g: [UInt8] = [1]
         for i in 0..<parityCount {
-            let root = exp[(firstRoot + i) % 255]
+            let root = exp[((firstRoot + i) * rootStep) % 255]
             var next = [UInt8](repeating: 0, count: g.count + 1)
             for (j, coefficient) in g.enumerated() {
                 next[j] ^= coefficient
@@ -56,6 +59,8 @@ public struct ReedSolomon: Sendable {
     private func div(_ a: UInt8, _ b: UInt8) -> UInt8 { a == 0 ? 0 : exp[(log[Int(a)] - log[Int(b)] + 255) % 255] }
     /// α^power for any integer power.
     private func alpha(_ power: Int) -> UInt8 { exp[((power % 255) + 255) % 255] }
+    /// β^power, β = α^rootStep: the element the code's roots and locators are powers of.
+    private func beta(_ power: Int) -> UInt8 { alpha((power % 255) * rootStep) }
 
     /// Parity symbols for `data` (`dataCount` symbols): the remainder of data(x)·x^parityCount divided by g(x).
     public func parity(for data: [UInt8]) -> [UInt8] {
@@ -80,7 +85,7 @@ public struct ReedSolomon: Sendable {
         var syndromes = [UInt8](repeating: 0, count: parityCount)
         var clean = true
         for i in 0..<parityCount {
-            let root = alpha(firstRoot + i)
+            let root = beta(firstRoot + i)
             var value: UInt8 = 0
             for symbol in codeword { value = mul(value, root) ^ symbol }
             syndromes[i] = value
@@ -120,10 +125,10 @@ public struct ReedSolomon: Sendable {
         guard degree == errors, degree > 0, 2 * degree <= parityCount else { return nil }
 
         // Chien search over the positions that exist: symbol j sits at degree (length - 1 - j), locator X = α^degree,
-        // and it is in error when Λ(X^-1) = 0.
+        // and it is in error when Λ(X^-1) = 0 (X = β^degree).
         var positions: [Int] = []
         for j in 0..<length {
-            let inverse = alpha(-(length - 1 - j))
+            let inverse = beta(-(length - 1 - j))
             var value: UInt8 = 0
             for coefficient in locator.reversed() { value = mul(value, inverse) ^ coefficient }
             if value == 0 { positions.append(j) }
@@ -138,7 +143,7 @@ public struct ReedSolomon: Sendable {
         var corrected = codeword
         for j in positions {
             let power = length - 1 - j
-            let inverse = alpha(-power)
+            let inverse = beta(-power)
             var omega: UInt8 = 0
             for coefficient in evaluator.reversed() { omega = mul(omega, inverse) ^ coefficient }
             // Formal derivative: only odd-degree terms survive, Λ'(x) = Σ Λ(2k+1) x^(2k).
@@ -150,12 +155,12 @@ public struct ReedSolomon: Sendable {
                 term = mul(term, inverseSquared)
             }
             guard derivative != 0 else { return nil }
-            let magnitude = mul(alpha(power * (1 - firstRoot)), div(omega, derivative))
+            let magnitude = mul(beta(power * (1 - firstRoot)), div(omega, derivative))
             corrected[j] ^= magnitude
         }
         // Belt and braces: the result must now be a codeword.
         for i in 0..<parityCount {
-            let root = alpha(firstRoot + i)
+            let root = beta(firstRoot + i)
             var value: UInt8 = 0
             for symbol in corrected { value = mul(value, root) ^ symbol }
             guard value == 0 else { return nil }
