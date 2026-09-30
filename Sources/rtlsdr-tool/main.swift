@@ -18,6 +18,7 @@ usage:
   rtlsdr-tool eeprom [--out FILE]
   rtlsdr-tool set-serial <serial> [--write] [--backup FILE]
   rtlsdr-tool adsb [--ifile FILE] [--raw] [--gain 49.6|auto] [--lat <deg> --lon <deg>] [--seconds N]
+  rtlsdr-tool uat [--ifile FILE | --frames FILE] [--raw] [--nexrad DIR] [--gain 49.6|auto] [--seconds N]
   rtlsdr-tool serve [--address 127.0.0.1] [--port 1234] [--rate 2048000] [--freq 100e6] [--gain auto|<dB>] [--allow-bias-tee] [--fast]
 
   every command: [--device <index> | --serial <serial>]
@@ -118,6 +119,9 @@ case "serve":
 
 case "adsb":
     adsb(arguments)
+
+case "uat":
+    uat(arguments)
 
 default:
     print(usage)
