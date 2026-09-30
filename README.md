@@ -96,10 +96,11 @@ It listens on 127.0.0.1 by default, because the protocol has no authentication.
 ### Decoders (`RTLSDRDecoders`)
 
 ADS-B / Mode S on 1090 MHz; UAT on 978 MHz (US general aviation) including FIS-B weather: NEXRAD radar mosaics
-rendered to PNG, METAR/TAF/winds-aloft text; and 433/868/915 MHz sensors the way rtl_433 decodes them (weather
-stations, thermometers, remotes: AcuRite, Oregon Scientific, LaCrosse, Fine Offset/Ecowitt, Bresser and others).
-`rtlsdr-tool adsb`, `uat` and `ism` run them live or on recorded I/Q, with output compatible with dump1090, dump978 and
-rtl_433. How they were checked, and against what: [docs/DECODERS.md](docs/DECODERS.md).
+rendered to PNG, METAR/TAF/winds-aloft text; 433/868/915 MHz sensors the way rtl_433 decodes them (weather
+stations, thermometers, remotes: AcuRite, Oregon Scientific, LaCrosse, Fine Offset/Ecowitt, Bresser and others); and
+Meteor-M weather-satellite images on 137 MHz (LRPT, QPSK and offset QPSK), with a live dashboard in the browser.
+`rtlsdr-tool adsb`, `uat`, `ism` and `meteor` run them live or on recorded I/Q, with output compatible with dump1090,
+dump978, rtl_433 and meteor_decode. How they were checked, and against what: [docs/DECODERS.md](docs/DECODERS.md).
 
 ```swift
 import RTLSDRDecoders
@@ -117,6 +118,11 @@ for frame in uat.process(block) where frame.kind == .uplink {
 
 let sensors = ISMReceiver()             // u8 I/Q at 250 kS/s, tuned to 433.92 MHz
 for event in sensors.process(block) { print(event.report.json()) }   // {"model" : "Acurite-Tower", ...}
+
+let meteor = LRPTDemodulator(sampleRate: 288_000, offset: true)       // Meteor-M N2-3/N2-4 on 137.9 MHz
+let lrpt = LRPTDecoder(mode: .oqpskNRZM)
+lrpt.process(soft: meteor.process(block))
+let picture = lrpt.imager.composite()?.png                            // RGB from the MSU-MR channels
 ```
 
 ### Command-line tool
@@ -135,6 +141,7 @@ swift run rtlsdr-tool serve --address 0.0.0.0                         # rtl_tcp 
 swift run -c release rtlsdr-tool adsb --lat 37.4 --lon -122.1         # aircraft on 1090 MHz
 swift run -c release rtlsdr-tool uat --nexrad radar/                  # 978 MHz: aircraft, weather text, radar PNGs
 swift run -c release rtlsdr-tool ism --json                           # 433.92 MHz sensors, rtl_433's JSON
+swift run -c release rtlsdr-tool meteor --web 8080 --out pass/        # Meteor-M images, live at localhost:8080
 ```
 
 Use a release build for the decoders: a debug build decodes ADS-B at about half real speed (it then drops blocks and
@@ -180,7 +187,7 @@ antenna, the bias tee on a dongle that has one, any other dongle model or tuner 
 other than 27, hot-plug, and using several dongles at once. Retuning takes about 27 ms, which limits scan speed.
 
 Also not verified on hardware: everything added on 2026-09-30 (retune shortcuts, overload guard / host AGC, scanning,
-EEPROM writing and serial provisioning, the `rtl_tcp` server, the ADS-B, UAT and ISM decoders). It was built and tested on
+EEPROM writing and serial provisioning, the `rtl_tcp` server, the ADS-B, UAT, ISM and Meteor-M decoders). It was built and tested on
 Linux only; the macOS build of those parts has not been compiled yet.
 
 ## Requirements

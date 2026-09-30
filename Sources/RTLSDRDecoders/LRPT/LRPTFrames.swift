@@ -5,8 +5,9 @@
 // window, derotate, Viterbi-decode with the traceback delay carried into the next window) and the correlator, soft-bit
 // helpers and derandomiser are ported from meteor_decode by dbdexter-dev (MIT licence,
 // https://github.com/dbdexter-dev/meteor_decode: decode.c, correlator/correlator.c, utils.c, ecc/descramble.c;
-// copyright notice in NOTICE). NRZ-M is undone on the decoded bits, where SatDump undoes it for Meteor-M N2-3/N2-4
-// (its "M2-x" pipeline). See PROVENANCE.md.
+// copyright notice in NOTICE). The correlator's mirrored phases and its search around the expected marker are new
+// (see `LRPTCorrelator`). NRZ-M is undone on the decoded bits, where SatDump undoes it for Meteor-M N2-3/N2-4 (its
+// "M2-x" pipeline). See PROVENANCE.md.
 
 /// Constants of the Meteor-M LRPT link.
 public enum LRPT {
@@ -15,7 +16,14 @@ public enum LRPT {
     public static let syncWord: UInt32 = 0x1acf_fc1d
     public static let caduBytes = 1024            // marker + 1020
     static let caduSoftSymbols = caduBytes * 8 * 2
-    static let correlationThreshold = 42          // of 64: a marker right at the window start is taken at once
+    /// Agreement (of 64) that takes a marker near where it was expected: above the marker's own sidelobes (the NRZ-M
+    /// coded marker one soft symbol off agrees with some phase in up to 47 bits), and seldom reached by random bits
+    /// over the 264 offsets and phases tried there (about one window in 70, which matters only when the signal has
+    /// just gone).
+    static let markerThreshold = 48
+    /// Soft symbols either side of the expected marker searched first: an offset-QPSK carrier slip moves the marker
+    /// by one, a symbol-clock slip by two.
+    static let markerReach = 16
 
     /// How the satellite transmits: Meteor-M N2 used plain QPSK; N2-3 and N2-4 use offset QPSK with NRZ-M
     /// (differentially coded) data.
@@ -76,9 +84,17 @@ public enum LRPT {
     }
 }
 
-/// QPSK phase ambiguities the correlator resolves.
-enum LRPTPhase: Int {
-    case p0 = 0, p90, p180, p270
+/// Phase ambiguities the correlator resolves: the four QPSK rotations, each with or without the constellation
+/// mirrored (Q negated). The mirror image is what an offset-QPSK carrier loop gives when it settles 90° off: the
+/// channel sampled first is then the other one, so re-paired on the marker the symbols come out conjugated. (It is
+/// also what swapped I/Q cables give.) meteor_decode tries the rotations only.
+struct LRPTPhase: Equatable {
+    enum Rotation: Int { case p0 = 0, p90, p180, p270 }
+    var rotation: Rotation
+    var mirrored: Bool
+
+    static let p0 = LRPTPhase(rotation: .p0, mirrored: false)
+    static let all = [false, true].flatMap { mirrored in (0..<4).map { LRPTPhase(rotation: Rotation(rawValue: $0)!, mirrored: mirrored) } }
 }
 
 enum SoftBits {
@@ -89,11 +105,16 @@ enum SoftBits {
         return out
     }
 
-    /// Undoes a rotation of the (I, Q) pairs in place (after limiting to ±127 so that negation cannot overflow).
+    /// Undoes a mirroring and rotation of the (I, Q) pairs in place (after limiting to ±127 so that negation cannot
+    /// overflow).
     static func derotate(_ soft: inout [Int8], from start: Int, count: Int, _ phase: LRPTPhase) {
         for index in start..<(start + count) { soft[index] = max(-127, soft[index]) }
+        if phase.mirrored {
+            var index = start + 1
+            while index < start + count { soft[index] = -soft[index]; index += 2 }
+        }
         var index = start
-        switch phase {
+        switch phase.rotation {
         case .p0: break
         case .p270:
             while index + 1 < start + count {
@@ -109,9 +130,9 @@ enum SoftBits {
     }
 }
 
-/// Finds the encoded frame marker in hard bits, at any bit offset and in any of the four QPSK rotations.
+/// Finds the encoded frame marker in hard bits, at any bit offset and in any of the eight phases (`LRPTPhase`).
 struct LRPTCorrelator {
-    private let words: [UInt64]
+    private let words: [UInt64]                    // in `LRPTPhase.all` order
 
     /// `differential`: the marker as NRZ-M coding leaves it (from a zero start; the other start is its complement,
     /// which the 180° rotation covers).
@@ -126,13 +147,14 @@ struct LRPTCorrelator {
             marker = coded
         }
         let encoded = ConvolutionalEncoder.encodeWord(marker)
-        words = (0..<4).map { phase in
-            let rotated = Self.rotate(encoded, LRPTPhase(rawValue: phase)!)
-            return ((rotated & 0x5555_5555_5555_5555) << 1) | ((rotated & 0xaaaa_aaaa_aaaa_aaaa) >> 1)
+        words = LRPTPhase.all.map { phase in
+            let rotated = Self.rotate(encoded, phase.rotation)
+            let paired = ((rotated & 0x5555_5555_5555_5555) << 1) | ((rotated & 0xaaaa_aaaa_aaaa_aaaa) >> 1)
+            return phase.mirrored ? paired ^ 0x5555_5555_5555_5555 : paired     // Q, the second of each pair, negated
         }
     }
 
-    private static func rotate(_ word: UInt64, _ phase: LRPTPhase) -> UInt64 {
+    private static func rotate(_ word: UInt64, _ phase: LRPTPhase.Rotation) -> UInt64 {
         let i = word & 0xaaaa_aaaa_aaaa_aaaa, q = word & 0x5555_5555_5555_5555
         switch phase {
         case .p0: return word
@@ -144,23 +166,47 @@ struct LRPTCorrelator {
 
     private static func agreement(_ x: UInt64, _ y: UInt64) -> Int { 64 - (x ^ y).nonzeroBitCount }
 
-    /// The best (bit offset, rotation, agreement out of 64). An offset of 0 wins at once above the threshold.
-    func correlate(_ hard: [UInt8]) -> (offset: Int, phase: LRPTPhase, score: Int) {
+    /// 64 bits of `hard` from bit `offset` on (which must leave 72 bits, or 64 at a byte boundary).
+    private static func word(_ hard: [UInt8], at offset: Int) -> UInt64 {
+        let byte = offset >> 3, shift = UInt64(offset & 7)
+        var value: UInt64 = 0
+        for index in 0..<8 { value = value << 8 | UInt64(hard[byte + index]) }
+        return shift == 0 ? value : value << shift | UInt64(hard[byte + 8]) >> (8 - shift)
+    }
+
+    /// The marker in `hard`: (bit offset, phase, agreement out of 64). With an `expected` offset, those within `reach`
+    /// of it come first, and the best of them (the nearest of equals) is taken if it reaches `LRPT.markerThreshold`;
+    /// otherwise the best anywhere. meteor_decode takes the expected offset alone once it passes 42 in any rotation,
+    /// but with the eight phases of offset QPSK the marker a soft symbol away (after a carrier slip) passes that too,
+    /// in the wrong place: the patterns are far from independent (the NRZ-M-coded marker mirrored agrees with one of
+    /// its rotations in 46 bits).
+    func correlate(_ hard: [UInt8], expected: Int?, reach: Int) -> (offset: Int, phase: LRPTPhase, score: Int) {
+        var near = (offset: 0, phase: LRPTPhase.p0, score: -1)
+        let last = hard.count * 8 - 72
+        for distance in 0...reach {
+            guard let expected else { break }
+            for offset in distance == 0 ? [expected] : [expected - distance, expected + distance] where offset >= 0 && offset <= last {
+                let window = Self.word(hard, at: offset)
+                for (phase, word) in words.enumerated() {
+                    let score = Self.agreement(word, window)
+                    if score > near.score { near = (offset, LRPTPhase.all[phase], score) }
+                }
+            }
+        }
+        if near.score >= LRPT.markerThreshold { return near }
+
         var window: UInt64 = 0
         for index in 0..<8 { window = window << 8 | UInt64(hard[index]) }
-        for phase in 0..<4 where Self.agreement(words[phase], window) > LRPT.correlationThreshold {
-            return (0, LRPTPhase(rawValue: phase)!, Self.agreement(words[phase], window))
-        }
         var best = 0, bestOffset = 0, bestPhase = LRPTPhase.p0
         for index in 0..<(hard.count - 8) {
             let byte = hard[index + 8]
             for bit in 0..<8 {
-                for phase in 0..<4 {
-                    let score = Self.agreement(words[phase], window)
+                for (phase, word) in words.enumerated() {
+                    let score = Self.agreement(word, window)
                     if score > best {
                         best = score
                         bestOffset = index * 8 + bit
-                        bestPhase = LRPTPhase(rawValue: phase)!
+                        bestPhase = LRPTPhase.all[phase]
                     }
                 }
                 window = (window << 1) | UInt64((byte >> (7 - UInt8(bit))) & 1)
@@ -177,7 +223,7 @@ public struct LRPTFrame: Sendable {
     public var corrected: Int?
     /// meteor_decode's Viterbi quality figure: the average path metric per byte (lower is better, ~1100 decodes).
     public var viterbiMetric: Int
-    /// How well the marker matched (of 64) and where it was found.
+    /// How well the marker matched (of 64), and how many soft symbols from where it was expected it was found.
     public var markerScore: Int
     public var markerOffset: Int
 
@@ -193,7 +239,9 @@ public final class LRPTFrameDecoder {
     private let correlator: LRPTCorrelator
     private let viterbi = ViterbiDecoder()
     private var soft: [Int8] = []
-    private var start = 0                          // where the next window begins in `soft`
+    private var start = 0                          // where the next marker is expected in `soft`
+    private var synced = false                     // the last marker was a clear one: expect the next a frame on
+    private var window = [Int8](repeating: 0, count: LRPT.caduSoftSymbols)   // one CADU's symbols, derotated
     private var pending = [UInt8](repeating: 0, count: LRPT.caduBytes)   // the frame whose last bytes are still to come
     private var pendingMetric = 0
     private var pendingScore = 0
@@ -214,37 +262,41 @@ public final class LRPTFrameDecoder {
             frames += produced
         }
         if start > 4 * LRPT.caduSoftSymbols {
-            soft.removeFirst(start)
-            start = 0
+            soft.removeFirst(start - LRPT.markerReach)      // keeping what the next search may look back at
+            start = LRPT.markerReach
         }
         return frames
     }
 
-    /// Decodes one window: nil if the symbols it needs have not all arrived.
+    /// Decodes one CADU's worth: nil if the symbols it needs have not all arrived.
     private func step() -> [LRPTFrame]? {
         let length = LRPT.caduSoftSymbols
-        guard soft.count - start >= length else { return nil }
-        let hard = soft.withUnsafeBufferPointer { SoftBits.hard($0, from: start, count: length) }
-        let (offset, phase, score) = correlator.correlate(hard)
-        let window = start + offset
-        guard window + length <= soft.count else { return nil }
-        SoftBits.derotate(&soft, from: window, count: length, phase)
+        let from = max(0, start - LRPT.markerReach)
+        guard soft.count - from >= length else { return nil }
+        let hard = soft.withUnsafeBufferPointer { SoftBits.hard($0, from: from, count: length) }
+        let (offset, phase, score) = correlator.correlate(hard, expected: synced ? start - from : nil, reach: LRPT.markerReach)
+        let marker = from + offset
+        guard marker + length <= soft.count else { return nil }
+        // Derotated in a copy: the next search may look back into these symbols.
+        window.replaceSubrange(0..<length, with: soft[marker..<(marker + length)])
+        SoftBits.derotate(&window, from: 0, count: length, phase)
 
         var frames: [LRPTFrame] = []
         let delay = ViterbiDecoder.delayBytes
-        soft.withUnsafeBufferPointer { buffer in
+        window.withUnsafeBufferPointer { buffer in
             // The first 8 bytes' worth of symbols finish the previous frame (the traceback runs 8 bytes behind).
-            let finishing = viterbi.decode(into: &pending, at: LRPT.caduBytes - delay, soft: buffer, at: window, byteCount: delay)
+            let finishing = viterbi.decode(into: &pending, at: LRPT.caduBytes - delay, soft: buffer, at: 0, byteCount: delay)
             if hasPending {
                 frames.append(finish(metric: pendingMetric + finishing))
             }
             // The rest start this frame.
-            pendingMetric = viterbi.decode(into: &pending, at: 0, soft: buffer, at: window + 2 * 8 * delay, byteCount: LRPT.caduBytes - delay)
+            pendingMetric = viterbi.decode(into: &pending, at: 0, soft: buffer, at: 2 * 8 * delay, byteCount: LRPT.caduBytes - delay)
         }
+        synced = score >= LRPT.markerThreshold
         pendingScore = score
-        pendingOffset = offset
+        pendingOffset = marker - start
         hasPending = true
-        start = window + length
+        start = marker + length
         return frames
     }
 
@@ -260,6 +312,9 @@ public final class LRPTFrameDecoder {
             }
             lastRawBit = previous
         }
+        // The marker, as found: its first bit, decoded from NRZ-M against the previous frame's last coded bit, comes
+        // out inverted whenever the phase taken flips by 180° between frames (which NRZ-M otherwise shrugs off).
+        for (index, byte) in [UInt8(0x1a), 0xcf, 0xfc, 0x1d].enumerated() { bytes[index] = byte }
         LRPT.derandomize(&bytes)
         let corrected = LRPT.correct(&bytes)
         return LRPTFrame(bytes: bytes, corrected: corrected, viterbiMetric: metric / LRPT.caduBytes,
@@ -280,6 +335,7 @@ public final class LRPTFrameDecoder {
         }
         soft.removeAll()
         start = 0
+        synced = false
         return frames
     }
 }

@@ -6,13 +6,13 @@ nothing (not even RTLSDRKit): feed it u8 I/Q from the dongle, from a file, or fr
 published messages and recordings made with other receivers. The on-air checks are listed in
 [HARDWARE.md](../HARDWARE.md).
 
-| | Mode S / ADS-B | UAT | ISM sensors |
-|---|---|---|---|
-| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s |
-| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) |
-| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders |
-| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` |
-| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) |
+| | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT |
+|---|---|---|---|---|
+| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) |
+| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each |
+| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only |
+| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--web PORT]` |
+| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) |
 
 ## How they were checked
 
@@ -105,16 +105,100 @@ How it was checked:
 * **Not ported** from rtl_433: the other 260-odd protocols, the flex decoder, magnitude (instead of amplitude)
   envelopes, the level and filter options (`-Y`), the automatic level, and the signal-strength fields (`-M level`).
 
+### Meteor-M LRPT
+
+The receive chain: a demodulator ported from meteor_demod (DC-removing AGC, root-raised-cosine matched filter,
+Costas-style carrier loop, Mueller-Müller symbol clock; QPSK for Meteor-M N2, offset QPSK for N2-3 and N2-4, 72
+ksym/s), then a frame decoder ported from meteor_decode (marker correlator, K=7 Viterbi decoder, derandomiser), NRZ-M
+undone on the decoded bits for N2-3/N2-4 (where SatDump undoes it), Reed-Solomon (255,223) in the conventional basis
+(this package's codec with β = α¹¹, first root 112), the M_PDU packet parser, and the MSU-MR image decoder (Huffman,
+quantisation, meteor_decode's fixed-point IDCT, channel assembly by packet sequence and time).
+
+Three things are new, where the originals lose frames:
+
+* **Carrier acquisition.** meteor_demod starts its loop at 0 Hz and sweeps ±3.4 kHz at 10⁻⁶ rad/symbol², which takes
+  seconds, and its lock detector can be fooled: on a −1500 Hz test signal it reported lock at +247 Hz and stayed off
+  frequency for 15 s. Here the signal is also raised to the fourth power (which strips QPSK and OQPSK modulation and
+  leaves a line at four times the carrier offset), transformed, and the loop is started on that line and moved to it
+  when it claims a lock well away from it. A continuous-wave spur, which has such a line too, is recognised by its line
+  in the plain spectrum and ignored.
+* **Eight phases, not four.** An offset-QPSK carrier loop that settles a quarter turn off pairs the wrong channels:
+  re-paired on the marker, the constellation comes out mirrored (Q negated), which no rotation undoes. meteor_decode
+  tries the four rotations only (its source notes "might also need I<->Q swaps?"); here the correlator also tries
+  their mirror images, which also covers swapped I/Q leads.
+* **Where to look for the next marker.** meteor_decode takes the marker at the expected place once it matches 42 of
+  64 bits in any rotation. For NRZ-M the marker one soft symbol away (after a carrier slip) also passes that, in some
+  other phase, and every frame after the slip is lost. Here the best match within ±16 soft symbols of the expected
+  place wins if it reaches 48, otherwise the best in the whole window. The first bit of each output frame's marker is
+  written as sent (NRZ-M decodes it against the previous frame's last bit, which a phase flip between frames inverts);
+  the marker is not part of the Reed-Solomon codewords, so nothing else changes.
+
+How it was checked:
+
+* **A real recording** (Meteor-M N2, QPSK, soft symbols, 22 July 2018, 35 s: `2018_07_22_LRPT_21-57-39.s` from
+  [YAM2D](https://github.com/DancingVixen/YAM2D); not included, that repository has no licence). All 261 frames that
+  meteor_decode and SatDump 1.2.2 recover are recovered, byte-identical (SatDump leaves two parity bits uncorrected in
+  two frames), all 1017 packets are found, and the three channel images are pixel-identical to meteor_decode's (within
+  one grey level of SatDump's).
+* **Synthetic I/Q from real frames.** `Tools/lrpt-oracle.py` randomises, NRZ-M codes (OQPSK), convolutionally encodes
+  and RRC-shapes those 261 frames with its own code, adds a carrier offset and drift, a 30 ppm clock error and noise
+  (Es/N0 12 dB unless stated), 288 kS/s. SatDump recovered exactly the frames sent from the signals it acquired, which
+  checks the modulator. Valid frames of 261, against meteor_demod's soft symbols put through this package's frame
+  decoder (meteor_decode at the commit ported predates N2-3: it has no NRZ-M decoding, its `--diff` being an older
+  symbol-level scheme, and it found no packets in the OQPSK signals):
+
+  | carrier offset | OQPSK: this demodulator | OQPSK: meteor_demod | QPSK: this demodulator | QPSK: meteor_demod |
+  |---|---|---|---|---|
+  | 0 Hz | 260 | 251 | | |
+  | +1500 Hz | 260 | 235 | 260 | 250 |
+  | −1500 Hz | 260 | 108 | 260 | 177 |
+  | −2050 → +450 Hz | 260 | 149 | 260 | 179 |
+  | +4000 → +1000 Hz (outside the ±3.4 kHz search range for the first 6 s) | 212 | 112 | 213 | 96 |
+  | −2500 → −1500 Hz, Es/N0 6 dB | 259 | 214 | | |
+  | −2500 → −1500 Hz, Es/N0 3 dB | 0 | 0 | | |
+
+  The frame lost in every row is the first: the carrier search needs its first transform (0.11 s).
+* **A synthetic scene end to end.** `Tools/lrpt-encode.py` draws a 400-line, three-channel weather scene (fractal land,
+  sea and cloud), compresses it the way MSU-MR does (8×8 DCT, JPEG quantisation scaled by a per-packet quality,
+  JPEG luminance Huffman tables, 14 blocks a packet) and packs it into 312 frames with reedsolo parity; `lrpt-oracle.py`
+  modulates them (OQPSK, −2050 → +450 Hz, Es/N0 11 dB). Demodulated from I/Q: 310 frames valid, each byte-identical to
+  the frame sent; the images are pixel-identical to those decoded from ideal symbols, and 37-39 dB PSNR against the
+  source scene (the compression's loss). SatDump 1.2.2 recovered nothing from that signal: its OQPSK loop acquired
+  some of these test signals and not others (258 frames at 0 Hz, 232 at −1500 Hz, none at +1500 Hz or on this one),
+  and it crashed on some runs.
+* **Unit tests**: the pseudo-noise sequence; Reed-Solomon parity against reedsolo and 16 symbol errors repaired;
+  frames through all eight phases in both modes with an odd lead; frames after an offset-QPSK carrier slip; noise alone
+  giving no valid frame; the carrier search on a modulated signal, a tone and noise; the demodulator end to end on a
+  signal from a modulator written in the test (textbook RRC formula) at −1500, 0 and +2200 Hz; and the image chain on
+  six frames from `lrpt-encode.py` (`Tests/RTLSDRDecodersTests/Resources/lrpt-scene.cadu`) against the source scene's
+  8×8 block statistics.
+* **Not done:** a pass received with this driver (none recorded yet); the 80 ksym/s mode N2-3 and N2-4 sometimes use,
+  which interleaves the symbols and inserts a marker every 80 (meteor_decode's `--int`); Meteor's other virtual channels
+  and telemetry; geometric correction, map overlays or pass prediction; the 3 dB case above, which a better loop might
+  reach.
+
+#### The dashboard
+
+`--web PORT` serves a live page while decoding (recordings play back in real time, or `--speed` times it): the receive
+chain as five stages (RF level, carrier with Doppler rate and the fourth-power estimate, symbol SNR and clock, frames,
+image lines), each with a sparkline; the imagery building up line by line (composite or any channel, contrast stretch,
+PNG download); a constellation drawn as a persistence heat map; spectrum and waterfall with the loop's carrier and the
+coarse estimate marked; a ribbon of every frame (clean, repaired, lost); SNR and carrier over the pass with loss of
+lock shaded; and packets per APID. Server-Sent Events push the numbers five times a second; image rows are fetched as
+PNG strips once every channel shown has them complete.
+
 ## Speed
 
 Decoding the oracle recordings on one core of the Linux build machine: ADS-B 2.4 s of signal in 0.29 s (release build)
 or 4.5 s (debug build); UAT 1.17 s of signal in 0.04 s (release) or 0.84 s (debug); ISM 122 s of signal in 0.74 s
-(release; rtl_433 takes 0.44 s). Live, a decoder that falls behind
+(release; rtl_433 takes 0.44 s); Meteor-M LRPT 36 s of I/Q in 1.8 s (release, to images; meteor_demod's
+demodulation alone takes 0.74 s) or 35 s of soft symbols in 0.5 s. Live, a decoder that falls behind
 drops whole blocks and reports it rather than queueing without limit, so use a release build for ADS-B.
 
 ## Rerunning the comparisons
 
-The oracles need dump1090-mutability, dump978, rtl_433 and a few Python packages; none of that is needed for `swift test`.
+The oracles need dump1090-mutability, dump978, rtl_433, meteor_demod, SatDump and a few Python packages; none of that is
+needed for `swift test`.
 
 ```
 Tools/modes-oracle.py 7 /tmp/modes                        # numpy
@@ -130,4 +214,10 @@ Tools/uat-oracle-compare.py /tmp/uat
 git clone https://github.com/merbanan/rtl_433_tests                                         # recordings
 Tools/ism-oracle-compare.py rtl_433 rtlsdr-tool rtl_433_tests/tests nexus acurite ...        # rtl_433 25.02
 Tools/generate-ism-vectors.py rtl_433 rtlsdr-tool rtl_433_tests/tests Tests/RTLSDRDecodersTests/Resources/ism-code-vectors.txt nexus ...
+
+Tools/lrpt-encode.py scene.cadu --scene-out scene/                                          # numpy, reedsolo
+Tools/lrpt-oracle.py scene.cadu scene.u8 --mode oqpsk --offset -800 --doppler 2500 --esn0 11   # numpy
+rtlsdr-tool meteor --ifile scene.u8 --mode oqpsk --out ours --cadu ours.cadu                  # compare with scene.cadu, scene/
+meteor_demod -B -s 288000 --bps 8 -m oqpsk -o md.s scene.u8 && rtlsdr-tool meteor --soft md.s --mode oqpsk
+satdump meteor_m2-x_lrpt baseband scene.u8 sd --samplerate 288000 --baseband_format cu8
 ```

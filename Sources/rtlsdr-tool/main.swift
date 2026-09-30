@@ -22,7 +22,8 @@ usage:
   rtlsdr-tool ism [--ifile FILE] [--freq 433.92e6] [--rate 250000] [--json] [--protocols 2,12,...] [--fsk classic|minmax]
                   [--analyze] [--codes] [--list-protocols] [--gain auto|<dB>] [--seconds N]
   rtlsdr-tool ism --code '[19]{36}b5a8f0470' [--json]
-  rtlsdr-tool meteor [--soft FILE] [--mode oqpsk|qpsk] [--out DIR] [--cadu FILE]
+  rtlsdr-tool meteor [--soft FILE | --ifile FILE] [--rate 288000] [--freq 137.9e6] [--mode oqpsk|qpsk] [--out DIR]
+                     [--web PORT [--host 127.0.0.1] [--speed 1]] [--cadu FILE] [--write-soft FILE] [--gain 40.2] [--seconds N]
   rtlsdr-tool serve [--address 127.0.0.1] [--port 1234] [--rate 2048000] [--freq 100e6] [--gain auto|<dB>] [--allow-bias-tee] [--fast]
 
   every command: [--device <index> | --serial <serial>]

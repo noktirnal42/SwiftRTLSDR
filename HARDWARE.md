@@ -50,6 +50,7 @@ hardware. The command in the right-hand column is the check to run. Please add t
 | ADS-B decoder | Aircraft appear with sensible positions and callsigns; compare with dump1090 or an online tracker at the same time; count messages per minute against dump1090 on the same antenna | `rtlsdr-tool adsb --lat <yours> --lon <yours>` (a 1090 MHz antenna helps a lot) |
 | UAT decoder (US only) | Ground-station uplinks decode; METARs match the published ones; radar PNGs match a radar map for the same time | `rtlsdr-tool uat --nexrad radar/` near a UAT ground station |
 | ISM sensor decoder | The neighbourhood's weather stations and thermometers appear, with the readings their displays show; run rtl_433 on a second dongle (or on a `capture` at 250 kS/s) and compare; the 250 kS/s rate works on this driver | `rtlsdr-tool ism --json` (433.92 MHz); `--freq 868.3e6` or `915e6` for FSK sensors |
+| Meteor-M LRPT decoder | During a pass (predict one with any satellite tracker; Meteor-M N2-3 and N2-4 are on 137.9 or 137.1 MHz) the dashboard locks, frames decode and the image builds; the 288 kS/s rate streams without dropped blocks; compare with SatDump on a `capture` of the same pass. A 137 MHz antenna (V-dipole or QFH) is needed; a whip rarely gets a usable signal | `rtlsdr-tool meteor --web 8080 --out pass/` (`--freq 137.1e6` if needed), or `capture --freq 137.9e6 --rate 288000` then `meteor --ifile` |
 
 ## Not tested
 

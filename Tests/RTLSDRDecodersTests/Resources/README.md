@@ -9,3 +9,5 @@
 | `dump978-sample-fields.txt` | The fields dump978's own decoder extracts from each of those frames | `Tools/uat-oracle-fields.c`, built against dump978's `uat_decode.c` |
 | `dump978-sample-nexrad.txt` | The NEXRAD blocks in those frames | dump978's `extract_nexrad` |
 | `ism-code-vectors.txt` | Bit buffers (rtl_433's `{bits}hex` notation) that the ISM decoders were given while decoding real recordings, and rtl_433 25.02's JSON for each (`rtl_433 -y`, without the time field) | `Tools/generate-ism-vectors.py` on the recordings of https://github.com/merbanan/rtl_433_tests (not included: that repository has no licence) |
+| `lrpt-scene.cadu` | Six Meteor-M LRPT transfer frames carrying 16 lines of a synthetic three-channel scene, MSU-MR compressed | `Tools/lrpt-encode.py lrpt-scene.cadu --lines 16 --seed 21` (written for this package; reedsolo for parity) |
+| `lrpt-scene-blocks.txt` | Mean and standard deviation of every 8×8 block of that scene's source images | The same run's `--scene-out` images |

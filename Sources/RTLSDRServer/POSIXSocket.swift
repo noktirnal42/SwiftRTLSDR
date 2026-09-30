@@ -45,7 +45,7 @@ enum POSIXSocket {
     }
 
     /// A listening socket on `host:port` (port 0 picks a free one) and the port it got.
-    static func listen(host: String, port: UInt16) throws -> (fd: Int32, port: UInt16) {
+    static func listen(host: String, port: UInt16, backlog: Int32 = 1) throws -> (fd: Int32, port: UInt16) {
         let fd = try newSocket()
         var one: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
@@ -54,7 +54,7 @@ enum POSIXSocket {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
         }
         guard bound == 0 else { let code = errno; close(fd); throw Failure(call: "bind(\(host):\(port))", code: code) }
-        guard systemListen(fd, 1) == 0 else { let code = errno; close(fd); throw Failure(call: "listen", code: code) }
+        guard systemListen(fd, backlog) == 0 else { let code = errno; close(fd); throw Failure(call: "listen", code: code) }
 
         var actual = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -131,6 +131,13 @@ enum POSIXSocket {
             }
             return Array(buffer.prefix(received))
         }
+    }
+
+    /// Makes a blocked send or recv on `fd` give up after `seconds` (a stalled client must not hold the sender).
+    static func setTimeouts(_ fd: Int32, seconds: Int) {
+        var value = timeval(tv_sec: seconds, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &value, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &value, socklen_t(MemoryLayout<timeval>.size))
     }
 
     /// Wakes any thread blocked in send or recv on `fd`.

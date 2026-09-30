@@ -4,3 +4,4 @@
 *.o
 *.dylib
 .DS_Store
+__pycache__/
