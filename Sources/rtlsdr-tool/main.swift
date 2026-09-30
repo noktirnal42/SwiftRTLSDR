@@ -56,8 +56,14 @@ case "capture":
 
         let bytes = try device.readSamples(byteCount: Int(actualRate * 2 * seconds))
         let statistics = SampleStatistics(bytes)
+        // "clipped" keeps its original meaning: the share of I/Q pairs with either value on a rail.
+        var clippedPairs = 0
+        for pair in stride(from: 0, to: bytes.count - 1, by: 2) where bytes[pair] == 0 || bytes[pair] == 255 || bytes[pair + 1] == 0 || bytes[pair + 1] == 255 {
+            clippedPairs += 1
+        }
         print(String(format: "%d samples: mean I %.2f Q %.2f, power %.1f dBFS, clipped %.3f%%", statistics.sampleCount,
-                     statistics.dcOffset.i, statistics.dcOffset.q, statistics.meanPowerDBFS, 100 * statistics.railFraction))
+                     statistics.dcOffset.i, statistics.dcOffset.q, statistics.meanPowerDBFS,
+                     100 * Double(clippedPairs) / Double(max(1, statistics.sampleCount))))
         if let path = arguments.option("out") {
             try Data(bytes).write(to: URL(fileURLWithPath: path))
             print("Wrote \(bytes.count) bytes to \(path)")

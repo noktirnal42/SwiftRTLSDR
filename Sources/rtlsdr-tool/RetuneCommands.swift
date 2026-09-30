@@ -58,6 +58,7 @@ func retuneBenchmark(_ arguments: Arguments) {
 /// `lockscan`: does the oscillator lock across the range?
 func lockScan(_ arguments: Arguments) {
     let from = arguments.double("from", default: 20e6), to = arguments.double("to", default: 1800e6), step = arguments.double("step", default: 5e6)
+    guard step >= 1 else { fail("--step must be at least 1 Hz") }
     do {
         let device = try arguments.openDevice()
         defer { device.close() }

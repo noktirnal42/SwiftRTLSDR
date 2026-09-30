@@ -10,6 +10,7 @@ public enum RTLSDRError: Error, LocalizedError, Equatable, Sendable {
     case unsupportedTuner
     case invalidSampleRate(Int)
     case frequencyOutOfRange(Int)
+    case frequencyCorrectionOutOfRange(Int)
     case pllOutOfRange(frequencyHz: Int)
     case alreadyStreaming
     case closed
@@ -36,6 +37,8 @@ public enum RTLSDRError: Error, LocalizedError, Equatable, Sendable {
             return "\(rate) S/s is not a sample rate the RTL2832U can produce (225-300 kS/s or 900 kS/s-3.2 MS/s)."
         case let .frequencyOutOfRange(hz):
             return "\(hz) Hz is outside what the tuner can reach."
+        case let .frequencyCorrectionOutOfRange(ppm):
+            return "A correction of \(ppm) ppm is more than the demodulator can hold (±488 ppm)."
         case let .pllOutOfRange(hz):
             return "The tuner's oscillator cannot be programmed for \(hz) Hz."
         case .alreadyStreaming:

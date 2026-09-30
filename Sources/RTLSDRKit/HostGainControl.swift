@@ -24,11 +24,13 @@ public final class HostGainControl: @unchecked Sendable {
 
     private let device: RTLSDRDevice
     private let queue = DispatchQueue(label: "RTLSDRKit.HostGainControl")
+    private let onQueue = DispatchSpecificKey<Bool>()
     private let onChange: (@Sendable (Change) -> Void)?
     private let onError: (@Sendable (Error) -> Void)?
 
     private let lock = NSLock()
     private var loop: GainLoop
+    private var appliedTenthsDB: Int
     private var arrived = 0            // blocks handed to observe(), numbered from 1
     private var appliedThrough = 0     // blocks that had arrived when the last change finished applying
     private var stopped = false
@@ -47,11 +49,13 @@ public final class HostGainControl: @unchecked Sendable {
         self.onChange = onChange
         self.onError = onError
         loop = GainLoop(configuration)
-        try device.setTunerGain(tenthsDB: loop.gainTenthsDB)
+        appliedTenthsDB = loop.gainTenthsDB
+        queue.setSpecific(key: onQueue, value: true)
+        try device.setTunerGain(tenthsDB: appliedTenthsDB)
     }
 
     /// The gain the control last applied, in tenths of a dB.
-    public var gainTenthsDB: Int { lock.lock(); defer { lock.unlock() }; return loop.gainTenthsDB }
+    public var gainTenthsDB: Int { lock.lock(); defer { lock.unlock() }; return appliedTenthsDB }
 
     /// The statistics of the most recent block observed.
     public var latestStatistics: SampleStatistics { lock.lock(); defer { lock.unlock() }; return latest }
@@ -72,19 +76,20 @@ public final class HostGainControl: @unchecked Sendable {
         queue.async { [self] in process(statistics, sequence: sequence) }
     }
 
-    /// Stops adjusting (the gain stays where it is). Waits for a change in progress to finish.
+    /// Stops adjusting (the gain stays where it is). Waits for a change in progress to finish, except when called from
+    /// `onChange` or `onError`, which run on the control's queue: there it returns at once, and nothing follows.
     public func stop() {
         lock.lock()
         stopped = true
         lock.unlock()
-        queue.sync {}
+        if DispatchQueue.getSpecific(key: onQueue) != true { queue.sync {} }
     }
 
     private func process(_ statistics: SampleStatistics, sequence: Int) {
         lock.lock()
         // Blocks that arrived before the last change finished may hold samples taken at the old gain.
         guard !stopped, sequence > appliedThrough else { lock.unlock(); return }
-        let before = loop.gainTenthsDB
+        let before = appliedTenthsDB
         let proposal = loop.observe(statistics)
         let after = loop.gainTenthsDB
         lock.unlock()
@@ -99,6 +104,7 @@ public final class HostGainControl: @unchecked Sendable {
         }
         lock.lock()
         loop.changeApplied()
+        appliedTenthsDB = after
         appliedThrough = arrived
         lock.unlock()
         onChange?(Change(fromTenthsDB: before, toTenthsDB: after, reason: proposal.reason, statistics: statistics))

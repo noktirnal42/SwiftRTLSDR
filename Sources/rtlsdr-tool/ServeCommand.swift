@@ -5,17 +5,20 @@ import RTLSDRServer
 
 /// `serve`: an rtl_tcp server for the dongle, until Ctrl-C.
 func serve(_ arguments: Arguments) -> Never {
+    // Options first, so a typo is reported before the dongle is opened.
+    var configuration = RTLTCPServer.Configuration()
+    configuration.address = arguments.option("address") ?? "127.0.0.1"
+    configuration.port = arguments.port("port", default: 1234)
+    configuration.allowBiasTee = arguments.flag("allow-bias-tee")
+    let rate = arguments.int("rate", default: 2_048_000)
+    let frequency = Int(arguments.double("freq", default: 100e6))
     do {
         let device = try arguments.openDevice()
-        try device.setSampleRate(arguments.int("rate", default: 2_048_000))
-        try device.setCenterFrequency(Int(arguments.double("freq", default: 100e6)))
+        try device.setSampleRate(rate)
+        try device.setCenterFrequency(frequency)
         try arguments.applyGain(to: device)
         try arguments.applyRetuneShortcuts(to: device)
 
-        var configuration = RTLTCPServer.Configuration()
-        configuration.address = arguments.option("address") ?? "127.0.0.1"
-        configuration.port = UInt16(arguments.int("port", default: 1234))
-        configuration.allowBiasTee = arguments.flag("allow-bias-tee")
         let address = configuration.address
         let server = RTLTCPServer(backend: device, configuration: configuration) { event in
             switch event {

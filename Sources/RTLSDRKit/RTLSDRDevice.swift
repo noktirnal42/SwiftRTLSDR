@@ -211,8 +211,12 @@ public final class RTLSDRDevice: @unchecked Sendable {
         }
     }
 
+    /// The corrections the demodulator can hold: its register is 14 bits signed, at 2^24 / 10^6 counts per ppm.
+    public static let frequencyCorrectionRange: ClosedRange<Int> = -488...488
+
     /// Corrects the crystal's error (positive = the crystal runs fast). Takes effect immediately.
     public func setFrequencyCorrection(ppm: Int) throws {
+        guard Self.frequencyCorrectionRange.contains(ppm) else { throw RTLSDRError.frequencyCorrectionOutOfRange(ppm) }
         try withControl {
             try chip.setFrequencyCorrection(ppm: ppm)
             settings.frequencyCorrectionPPM = ppm

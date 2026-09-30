@@ -34,13 +34,21 @@ struct Arguments {
 
     static let switches: Set<String> = ["--fast", "--write", "--guard", "--streaming", "--allow-bias-tee", "--no-cover"]
 
+    /// A number (e-notation allowed). Bounded so that every later conversion to `Int` is safe.
     func double(_ name: String, default value: Double) -> Double {
         guard let text = option(name) else { return value }
-        guard let number = Double(text) else { fail("--\(name) needs a number, got \(text)") }
+        guard let number = Double(text), number.isFinite else { fail("--\(name) needs a number, got \(text)") }
+        guard abs(number) < 1e12 else { fail("--\(name) is out of range: \(text)") }
         return number
     }
 
     func int(_ name: String, default value: Int) -> Int { Int(double(name, default: Double(value))) }
+
+    func port(_ name: String, default value: UInt16) -> UInt16 {
+        let number = int(name, default: Int(value))
+        guard let port = UInt16(exactly: number) else { fail("--\(name) must be a port number, 0-65535") }
+        return port
+    }
 
     /// Opens the dongle chosen by `--device <index>` (as `list` numbers them) or `--serial <serial>`, else the first.
     func openDevice() throws -> RTLSDRDevice {

@@ -43,17 +43,19 @@ public struct PeakDetector: Sendable, Equatable {
         let powers = spectrum.powerDB
         guard !powers.isEmpty else { return [] }
         let window = max(16, Int(floorWindowHz / spectrum.binWidthHz))
+        // Window boundaries; a short remainder joins the last full window, so no median rests on a handful of bins
+        // (which a signal could fill).
+        var starts = Array(stride(from: 0, to: powers.count, by: window))
+        if starts.count > 1, powers.count - starts.last! < window / 2 { starts.removeLast() }
         // Median of each window, placed at the window's centre.
         var anchors: [(position: Double, level: Double)] = []
-        var start = 0
-        while start < powers.count {
-            let end = min(powers.count, start + window)
+        for (index, start) in starts.enumerated() {
+            let end = index + 1 < starts.count ? starts[index + 1] : powers.count
             let values = powers[start..<end].filter { !$0.isNaN }.sorted()
             if !values.isEmpty {
                 let median = values.count % 2 == 1 ? values[values.count / 2] : (values[values.count / 2 - 1] + values[values.count / 2]) / 2
                 anchors.append((Double(start + end - 1) / 2, median))
             }
-            start = end
         }
         guard !anchors.isEmpty else { return powers }
         var floor = [Double](repeating: 0, count: powers.count)
@@ -74,11 +76,19 @@ public struct PeakDetector: Sendable, Equatable {
         return floor
     }
 
+    /// A run of bins above the threshold: its strongest bin and its outer edges (in Hz).
+    private struct Run {
+        var detection: Detection
+        var lowEdge: Double
+        var highEdge: Double
+    }
+
     /// Detections in frequency order.
     public func detect(in spectrum: Spectrum) -> [Detection] {
         let powers = spectrum.powerDB
         let floor = noiseFloor(of: spectrum)
-        var found: [Detection] = []
+        let half = spectrum.binWidthHz / 2
+        var runs: [Run] = []
         var bin = 0
         while bin < powers.count {
             guard !powers[bin].isNaN, powers[bin] > floor[bin] + thresholdDB else { bin += 1; continue }
@@ -88,25 +98,27 @@ public struct PeakDetector: Sendable, Equatable {
                 end += 1
                 if powers[end] > powers[strongest] { strongest = end }
             }
-            found.append(Detection(frequencyHz: spectrum.frequency(ofBin: strongest), powerDB: powers[strongest],
-                                   noiseFloorDB: floor[strongest], bandwidthHz: Double(end - bin + 1) * spectrum.binWidthHz))
+            let detection = Detection(frequencyHz: spectrum.frequency(ofBin: strongest), powerDB: powers[strongest],
+                                      noiseFloorDB: floor[strongest], bandwidthHz: Double(end - bin + 1) * spectrum.binWidthHz)
+            runs.append(Run(detection: detection, lowEdge: spectrum.frequency(ofBin: bin) - half,
+                            highEdge: spectrum.frequency(ofBin: end) + half))
             bin = end + 1
         }
-        return merged(found, binWidth: spectrum.binWidthHz)
+        return merged(runs).map(\.detection)
     }
 
-    private func merged(_ detections: [Detection], binWidth: Double) -> [Detection] {
-        var result: [Detection] = []
-        for detection in detections {
-            guard let last = result.last, detection.frequencyHz - last.frequencyHz < minimumSeparationHz else {
-                result.append(detection)
+    /// Peaks closer than `minimumSeparationHz` become one detection: the stronger peak, spanning both runs.
+    private func merged(_ runs: [Run]) -> [Run] {
+        var result: [Run] = []
+        for run in runs {
+            guard let last = result.last, run.detection.frequencyHz - last.detection.frequencyHz < minimumSeparationHz else {
+                result.append(run)
                 continue
             }
-            // Keep the stronger peak; the bandwidth spans both runs.
-            let lowEdge = min(last.frequencyHz - last.bandwidthHz / 2, detection.frequencyHz - detection.bandwidthHz / 2)
-            let highEdge = max(last.frequencyHz + last.bandwidthHz / 2, detection.frequencyHz + detection.bandwidthHz / 2)
-            var keep = detection.powerDB > last.powerDB ? detection : last
-            keep.bandwidthHz = max(binWidth, highEdge - lowEdge)
+            var keep = run.detection.powerDB > last.detection.powerDB ? run : last
+            keep.lowEdge = min(last.lowEdge, run.lowEdge)
+            keep.highEdge = max(last.highEdge, run.highEdge)
+            keep.detection.bandwidthHz = keep.highEdge - keep.lowEdge
             result[result.count - 1] = keep
         }
         return result

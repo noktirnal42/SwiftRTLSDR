@@ -101,7 +101,10 @@ final class RTL2832U: @unchecked Sendable, I2CBus {
     /// Leave the repeater on between tuner accesses instead of switching it around each one (a retune shortcut).
     private(set) var keepsRepeaterOn = false
 
+    /// A failed write (or its latch read) leaves the chip's state unknown, so the bus counts as closed until an "on"
+    /// write fully succeeds: the worst case is then one redundant "on" write, never tuner traffic into a closed bus.
     private func setRepeater(_ on: Bool) throws {
+        repeaterOn = false
         try writeDemod(page: 1, 0x01, on ? 0x18 : 0x10)
         repeaterOn = on
     }
@@ -134,8 +137,8 @@ final class RTL2832U: @unchecked Sendable, I2CBus {
     /// Restarts the demodulator (so a new resampler ratio takes effect). The same register holds the repeater bit, so
     /// this also switches the repeater off.
     private func softReset() throws {
-        try writeDemod(page: 1, 0x01, 0x14)
         repeaterOn = false
+        try writeDemod(page: 1, 0x01, 0x14)
         try writeDemod(page: 1, 0x01, 0x10)
     }
 

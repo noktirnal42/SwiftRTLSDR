@@ -32,6 +32,10 @@ final class SyntheticReceiver: ScanReceiver {
     var dcOffsetCodes: Double
     private(set) var tunedHz = 0
     private(set) var tuneLog: [Int] = []
+    /// Tuning to one of these (or into one of the ranges) leaves the oscillator unlocked.
+    var unlockedFrequencies: Set<Int> = []
+    var unlockedRanges: [ClosedRange<Int>] = []
+    private(set) var pllLocked = true
     private var generator = SeededGenerator(state: 1)
 
     init(sampleRate: Double = 2_400_000, tones: [Tone] = [], noiseCodes: Double = 3, dcOffsetCodes: Double = 4) {
@@ -44,6 +48,7 @@ final class SyntheticReceiver: ScanReceiver {
     func tune(to hertz: Int) throws {
         tunedHz = hertz
         tuneLog.append(hertz)
+        pllLocked = !unlockedFrequencies.contains(hertz) && !unlockedRanges.contains { $0.contains(hertz) }
     }
 
     func capture(byteCount: Int) throws -> [UInt8] {

@@ -35,6 +35,11 @@ final class RecordingTransport: RTLSDRTransport, @unchecked Sendable {
     /// Offsets whose writes do not stick (a worn or write-protected EEPROM).
     var stuckEEPROMOffsets: Set<Int> = []
 
+    /// After a write matching this (wValue, wIndex, data), the next read fails once: a write that reached the chip
+    /// followed by a failed latch read.
+    var failReadAfterWrite: (value: UInt16, index: UInt16, data: [UInt8])?
+    private var failNextRead = false
+
     /// Header with the IDs 0bda:2838, serial enabled, IR endpoint flag set; strings "Realtek", "RTL2838UHIDIR",
     /// "00000001"; zeros up to 0x7f and never-written 0xff after that, like the dump described in docs/WHAT-TO-BUILD.md.
     static let genericEEPROM: [UInt8] = {
@@ -53,6 +58,7 @@ final class RecordingTransport: RTLSDRTransport, @unchecked Sendable {
 
     func vendorRead(value: UInt16, index: UInt16, length: Int) throws -> [UInt8] {
         lock.lock(); defer { lock.unlock() }
+        if failNextRead { failNextRead = false; throw RTLSDRError.usb("injected read failure") }
         var answer = [UInt8](repeating: registerReadValue, count: length)
         if (index >> 8) & 0xff == 6, value == 0x34 {                     // I2C block, the tuner's address
             answer = length == 1 ? [tunerStatus[0]] : Array((tunerStatus + [UInt8](repeating: 0, count: 8)).prefix(length))
@@ -73,6 +79,10 @@ final class RecordingTransport: RTLSDRTransport, @unchecked Sendable {
             eepromPointer = Int(address)
             if data.count == 2, !stuckEEPROMOffsets.contains(Int(address)) { eeprom[Int(address)] = data[1] }
             if data.count == 2 { eepromPointer = (Int(address) + 1) % eeprom.count }
+        }
+        if let trigger = failReadAfterWrite, trigger.value == value, trigger.index == index, trigger.data == data {
+            failReadAfterWrite = nil
+            failNextRead = true
         }
         log.append(Transfer(isWrite: true, value: value, index: index, data: data))
     }

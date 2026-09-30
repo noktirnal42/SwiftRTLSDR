@@ -248,7 +248,7 @@ struct ScanLoopTests {
     @Test func theCarrierDecoderOnlyHearsACorrectlyMixedDwell() throws {
         let decoder = CarrierDecoder()
         let (scanLoop, _) = try loop(tones: [402_000_000], decoder: decoder)
-        var dwell = try scanLoop.listen(to: Detection(frequencyHz: 402_000_000, powerDB: -20, noiseFloorDB: -50, bandwidthHz: 2000), for: 0.01)
+        var dwell = try #require(try scanLoop.listen(to: Detection(frequencyHz: 402_000_000, powerDB: -20, noiseFloorDB: -50, bandwidthHz: 2000), for: 0.01))
         #expect(decoder.decode(dwell).count == 1)
         dwell.signalOffsetHz = 0                          // as if the offset had been forgotten
         #expect(decoder.decode(dwell).isEmpty)
@@ -283,7 +283,7 @@ struct ScanLoopTests {
     @Test func nearTheTopOfTheTunerRangeTheOffsetFlipsBelow() throws {
         let decoder = CarrierDecoder()
         let (scanLoop, _) = try loop(tones: [], decoder: decoder) { $0.tunableRange = 24_000_000...402_300_000 }
-        let dwell = try scanLoop.listen(to: Detection(frequencyHz: 402_000_000, powerDB: -20, noiseFloorDB: -50, bandwidthHz: 2000), for: 0.001)
+        let dwell = try #require(try scanLoop.listen(to: Detection(frequencyHz: 402_000_000, powerDB: -20, noiseFloorDB: -50, bandwidthHz: 2000), for: 0.001))
         #expect(dwell.tunedHz == 401_400_000 && dwell.signalOffsetHz == 600_000)
     }
 }

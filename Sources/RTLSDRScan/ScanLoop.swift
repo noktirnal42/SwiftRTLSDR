@@ -141,8 +141,8 @@ public final class ScanLoop {
         var dwells: [DwellReport] = []
         for detection in candidates {
             guard dwells.count < configuration.maximumDwellsPerRound else { break }
-            guard let decoder = decoders.first(where: { $0.wants(detection) }) else { continue }
-            let dwell = try listen(to: detection, for: decoder.dwellSeconds)
+            guard let decoder = decoders.first(where: { $0.wants(detection) }),
+                  let dwell = try listen(to: detection, for: decoder.dwellSeconds) else { continue }
             let messages = decoder.decode(dwell)
             dwells.append(DwellReport(detection: detection, decoder: decoder.name, tunedHz: dwell.tunedHz, messages: messages))
             successes.removeAll { abs($0.frequencyHz - detection.frequencyHz) < configuration.sameSignalHz }
@@ -155,14 +155,15 @@ public final class ScanLoop {
         return Round(number: round, spectrum: spectrum, detections: detections, dwells: dwells)
     }
 
-    /// Tunes beside the signal and records it.
-    func listen(to detection: Detection, for seconds: Double) throws -> Dwell {
+    /// Tunes beside the signal and records it; nil if the oscillator did not lock there.
+    func listen(to detection: Detection, for seconds: Double) throws -> Dwell? {
         let receiver = scanner.receiver
         let offset = Int((configuration.dwellOffsetFraction * receiver.sampleRate).rounded())
         let frequency = Int(detection.frequencyHz.rounded())
         var tuned = frequency + offset
         if !configuration.tunableRange.contains(tuned) { tuned = frequency - offset }
         try receiver.tune(to: tuned)
+        guard receiver.pllLocked else { return nil }
         let settleBytes = Int(scanner.configuration.settleSeconds * receiver.sampleRate) * 2
         let wanted = max(2, Int(seconds * receiver.sampleRate) * 2)
         let bytes = try receiver.capture(byteCount: settleBytes + wanted)

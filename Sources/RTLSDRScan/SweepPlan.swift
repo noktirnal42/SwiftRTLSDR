@@ -8,27 +8,34 @@ import Foundation
 /// usable width apart, so every frequency is seen by two hops and each hop's DC hole is filled by a neighbour; without
 /// it the hops are twice as far apart and a narrow gap stays at every hop's centre.
 ///
-/// All hops share one bin grid: the step is a whole number of bins, so bins from neighbouring hops line up.
+/// All hops share one bin grid: the step is a whole number of bins, so bins from neighbouring hops line up. Hops that
+/// would fall outside `tunableRange` are pulled inside it by whole bins, so they stay on the grid.
 public struct SweepPlan: Sendable, Equatable {
     public let range: ClosedRange<Int>
     public let sampleRate: Double
     public let fftSize: Int
     /// Tuning frequency of each hop, in order.
     public let centers: [Int]
+    /// Where each hop's centre bin sits on the shared grid, counted from the lowest hop's centre.
+    public let hopOffsetBins: [Int]
     /// Bins trusted on each side of a hop's centre bin.
     public let usableHalfBins: Int
     /// Bins on each side of the centre bin (and the centre bin itself) that are ignored.
     public let dcHalfBins: Int
-    /// Distance between neighbouring hops, in bins.
+    /// Distance between neighbouring hops, in bins (before any clamping into the tunable range).
     public let stepBins: Int
+    /// Frequency of the lowest hop's centre bin, before rounding to whole hertz for tuning.
+    private let originHz: Double
 
     public var binWidth: Double { sampleRate / Double(fftSize) }
 
     public init?(range: ClosedRange<Int>, sampleRate: Double, fftSize: Int,
-                 usableFraction: Double = 0.75, dcExclusionHz: Double = 10_000, coverDCHoles: Bool = true) {
+                 usableFraction: Double = 0.75, dcExclusionHz: Double = 10_000, coverDCHoles: Bool = true,
+                 tunableRange: ClosedRange<Int>? = nil) {
         guard sampleRate > 0, fftSize >= 16, fftSize & (fftSize - 1) == 0, usableFraction > 0, usableFraction <= 1 else { return nil }
         let binWidth = sampleRate / Double(fftSize)
-        let usableHalf = Int(Double(fftSize) * usableFraction / 2)
+        // The outermost bin (index 0) has no partner above DC, so the usable span stops one bin short of it.
+        let usableHalf = min(fftSize / 2 - 1, Int(Double(fftSize) * usableFraction / 2))
         let dcHalf = max(0, Int((max(0, dcExclusionHz) / binWidth).rounded(.up)))
         // A hop must keep some usable bins beside its DC hole, and with overlapping hops the neighbour must reach past it.
         let step = coverDCHoles ? usableHalf : 2 * usableHalf + 1
@@ -44,22 +51,34 @@ public struct SweepPlan: Sendable, Equatable {
         // With overlap the first hop sits at the bottom of the range (the half below it is discarded), so every
         // frequency in the range lies between two hop centres. Without, the first usable bin starts the range.
         let first = Double(range.lowerBound) + (coverDCHoles ? 0 : Double(usableHalf) * binWidth)
-        let stepHz = Double(step) * binWidth
-        var centers: [Int] = []
+        var offsets: [Int] = []
         var hop = 0
         while true {
-            let center = first + Double(hop) * stepHz
-            centers.append(Int(center.rounded()))
-            let covered = coverDCHoles ? center : center + Double(usableHalf) * binWidth
+            let nominal = first + Double(hop * step) * binWidth
+            var shift = 0
+            if let tunableRange {
+                if nominal > Double(tunableRange.upperBound) {
+                    shift = -Int(((nominal - Double(tunableRange.upperBound)) / binWidth).rounded(.up))
+                } else if nominal < Double(tunableRange.lowerBound) {
+                    shift = Int(((Double(tunableRange.lowerBound) - nominal) / binWidth).rounded(.up))
+                }
+            }
+            let offset = hop * step + shift
+            if offsets.last != offset { offsets.append(offset) }       // clamping can land two hops on the same bin
+            let covered = coverDCHoles ? nominal : nominal + Double(usableHalf) * binWidth
             if covered >= Double(range.upperBound) { break }
             hop += 1
         }
-        self.centers = centers
+        let lowest = offsets.min()!
+        let origin = first + Double(lowest) * binWidth
+        originHz = origin
+        hopOffsetBins = offsets.map { $0 - lowest }
+        centers = hopOffsetBins.map { Int((origin + Double($0) * binWidth).rounded()) }
     }
 
     /// The spectrum grid: frequency of global bin 0, and the number of global bins the hops span.
-    var gridStart: Double { Double(centers[0]) - Double(usableHalfBins) * binWidth }
-    var gridCount: Int { (centers.count - 1) * stepBins + 2 * usableHalfBins + 1 }
+    var gridStart: Double { originHz - Double(usableHalfBins) * binWidth }
+    var gridCount: Int { hopOffsetBins.max()! + 2 * usableHalfBins + 1 }
 }
 
 /// Power across a frequency range, in dB relative to a full-scale tone, on a uniform grid.
@@ -102,7 +121,7 @@ public struct SpectrumStitcher: Sendable {
         precondition(plan.centers.indices.contains(index) && power.count == plan.fftSize, "hop and FFT size must match the plan")
         let middle = plan.fftSize / 2
         for offset in -plan.usableHalfBins...plan.usableHalfBins where abs(offset) > plan.dcHalfBins {
-            let global = index * plan.stepBins + offset + plan.usableHalfBins
+            let global = plan.hopOffsetBins[index] + offset + plan.usableHalfBins
             sum[global] += power[middle + offset]
             count[global] += 1
         }

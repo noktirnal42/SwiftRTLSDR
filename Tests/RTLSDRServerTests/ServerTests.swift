@@ -65,18 +65,21 @@ final class FakeBackend: RTLTCPBackend, @unchecked Sendable {
     func startStreaming(blockSize: Int, bufferCount: Int, onError: (@Sendable (Error) -> Void)?,
                         handler: @escaping @Sendable (UnsafeBufferPointer<UInt8>) -> Void) throws {
         condition.lock()
+        defer { condition.unlock() }
+        if refusesToStream { log.append("start refused"); condition.broadcast(); throw POSIXSocket.Failure(call: "already streaming", code: 16) }
         self.handler = handler
         errorHandler = onError
         log.append("start")
         condition.broadcast()
-        condition.unlock()
     }
+
+    /// When set, startStreaming fails the way a device already streaming for someone else does.
+    var refusesToStream = false
 
     func stopStreaming() {
         condition.lock()
-        let wasStreaming = handler != nil
         handler = nil
-        if wasStreaming { log.append("stop") }
+        log.append("stop")                  // logged even when not streaming, so a stray call is visible
         condition.broadcast()
         condition.unlock()
     }
@@ -274,6 +277,17 @@ struct ServerTests {
         backend.fail(POSIXSocket.Failure(call: "unplugged", code: 5))
         #expect(client.read(1, timeout: 3).isEmpty, "connection closed")
         #expect(backend.wait { $0.last == "stop" })
+    }
+
+    @Test func aClientNeverStopsAStreamItDidNotStart() throws {
+        let (server, backend, _) = try startServer()
+        defer { server.stop() }
+        backend.refusesToStream = true                    // the device is busy streaming for someone else
+        let client = try TestClient(port: server.port)
+        _ = client.read(12)
+        #expect(client.read(1, timeout: 3).isEmpty, "the session ends")
+        #expect(eventually { !server.isServingClient })
+        #expect(backend.calls == ["start refused"], "and never calls stopStreaming on someone else's stream")
     }
 
     @Test func stoppingTheServerDisconnectsTheClientAndStopsTheStream() throws {

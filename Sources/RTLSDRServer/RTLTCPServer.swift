@@ -36,6 +36,8 @@ extension RTLSDRDevice: RTLTCPBackend {
 ///
 /// **The protocol has no authentication or encryption.** The default address is 127.0.0.1; serving on other
 /// interfaces lets anyone who can reach the port retune the dongle and receive its samples.
+///
+/// A running server keeps itself alive (its threads hold it) until `stop()` is called.
 public final class RTLTCPServer: @unchecked Sendable {
 
     public struct Configuration: Sendable {
@@ -90,8 +92,6 @@ public final class RTLTCPServer: @unchecked Sendable {
         self.onEvent = onEvent
     }
 
-    deinit { stop() }
-
     /// The port being listened on (useful with `port: 0`).
     public var port: UInt16 { lock.lock(); defer { lock.unlock() }; return boundPort }
     public var statistics: Statistics { lock.lock(); defer { lock.unlock() }; return stats }
@@ -133,7 +133,13 @@ public final class RTLTCPServer: @unchecked Sendable {
         }
         while isRunning {
             let accepted: (fd: Int32, peer: String)?
-            do { accepted = try POSIXSocket.accept(fd, timeout: 200) } catch { continue }
+            do {
+                accepted = try POSIXSocket.accept(fd, timeout: 200)
+            } catch {
+                // A lasting failure (out of file descriptors, say) would otherwise spin: the connection stays pending.
+                Thread.sleep(forTimeInterval: 0.1)
+                continue
+            }
             guard let (client, peer) = accepted else { continue }
             lock.lock()
             let busy = session != nil || !running
@@ -226,6 +232,8 @@ private final class Session: @unchecked Sendable {
     private var queueHead = 0
     private var queuedBytes = 0
     private var ending: String?
+    /// Set (under `condition`) when `fd` is closed, so a late `finish` cannot shut down a reused descriptor number.
+    private var socketClosed = false
     private let senderDone = DispatchSemaphore(value: 0)
 
     init(server: RTLTCPServer, fd: Int32, peer: String) {
@@ -237,10 +245,10 @@ private final class Session: @unchecked Sendable {
     /// Ends the session from any thread (idempotent): wakes the command reader and the sender.
     func finish(_ reason: String) {
         condition.lock()
+        defer { condition.unlock() }
         if ending == nil { ending = reason }
         condition.broadcast()
-        condition.unlock()
-        POSIXSocket.shutdown(fd)
+        if !socketClosed { POSIXSocket.shutdown(fd) }
     }
 
     private var endReason: String? { condition.lock(); defer { condition.unlock() }; return ending }
@@ -249,7 +257,10 @@ private final class Session: @unchecked Sendable {
         let backend = server.backendForSession
         server.record(.clientConnected(peer: peer))
         defer {
+            condition.lock()
+            socketClosed = true
             POSIXSocket.close(fd)
+            condition.unlock()
             server.record(.clientDisconnected(peer: peer, reason: endReason ?? "unknown"))
         }
 
@@ -257,17 +268,20 @@ private final class Session: @unchecked Sendable {
         do { try POSIXSocket.sendAll(fd, header.bytes) } catch { finish("could not send the header: \(error)"); return }
 
         Thread.detachNewThread { [self] in sendLoop() }
+        var streaming = false
         do {
             try backend.startStreaming(
                 blockSize: server.configuration.blockSize, bufferCount: server.configuration.bufferCount,
                 onError: { [weak self] error in self?.finish("the dongle stopped streaming: \(error.localizedDescription)") },
                 handler: { [weak self] block in self?.enqueue(block) })
+            streaming = true
         } catch {
             finish("could not start streaming: \(error.localizedDescription)")
         }
 
         readCommands()
-        backend.stopStreaming()
+        // Only a stream this session started is ours to stop: the device may be streaming for someone else.
+        if streaming { backend.stopStreaming() }
         finish("closed")
         senderDone.wait()
     }

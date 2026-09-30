@@ -7,6 +7,8 @@ public protocol ScanReceiver: AnyObject {
     /// The sample rate in effect, in samples per second.
     var sampleRate: Double { get }
     func tune(to hertz: Int) throws
+    /// Whether the most recent `tune(to:)` locked the oscillator; samples from an unlocked retune are off-frequency.
+    var pllLocked: Bool { get }
     /// Interleaved unsigned 8-bit I/Q, all sampled after the most recent `tune(to:)` returned.
     func capture(byteCount: Int) throws -> [UInt8]
 }
@@ -35,6 +37,8 @@ public final class BandScanner {
         /// time has not been measured.
         public var settleSeconds = 0.002
         public var detector = PeakDetector()
+        /// Hops are kept inside this range (nil: no limit).
+        public var tunableRange: ClosedRange<Int>? = RTLSDRDevice.tunableRange
 
         public init(range: ClosedRange<Int>) { self.range = range }
     }
@@ -43,12 +47,15 @@ public final class BandScanner {
     public let configuration: Configuration
     public let plan: SweepPlan
     private let estimator: SpectrumEstimator
+    /// Hop centres whose oscillator did not lock in the last sweep. Their bins came only from neighbouring hops (with
+    /// overlapping hops, everything but the edges of the swept range).
+    public private(set) var unlockedHops: [Int] = []
 
     public init(receiver: ScanReceiver, configuration: Configuration) throws {
         guard let estimator = SpectrumEstimator(fftSize: configuration.fftSize),
               let plan = SweepPlan(range: configuration.range, sampleRate: receiver.sampleRate, fftSize: configuration.fftSize,
                                    usableFraction: configuration.usableFraction, dcExclusionHz: configuration.dcExclusionHz,
-                                   coverDCHoles: configuration.coverDCHoles)
+                                   coverDCHoles: configuration.coverDCHoles, tunableRange: configuration.tunableRange)
         else { throw ScanError.invalidConfiguration }
         self.receiver = receiver
         self.configuration = configuration
@@ -61,8 +68,10 @@ public final class BandScanner {
         var stitcher = SpectrumStitcher(plan: plan)
         let settleBytes = Int(configuration.settleSeconds * receiver.sampleRate) * 2
         let wanted = configuration.framesPerHop * configuration.fftSize * 2
+        unlockedHops = []
         for (index, center) in plan.centers.enumerated() {
             try receiver.tune(to: center)
+            guard receiver.pllLocked else { unlockedHops.append(center); continue }
             let bytes = try receiver.capture(byteCount: settleBytes + wanted)
             guard let power = estimator.averagePower(Array(bytes.dropFirst(settleBytes))) else { throw ScanError.shortCapture }
             stitcher.add(hop: index, power: power)
