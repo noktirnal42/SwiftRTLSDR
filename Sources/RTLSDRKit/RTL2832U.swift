@@ -96,11 +96,40 @@ final class RTL2832U: @unchecked Sendable, I2CBus {
         return try i2cRead(address: address, length: 1).first ?? 0
     }
 
-    /// The tuner is only reachable while the repeater is on. Always turned off again, even on error.
+    /// Whether the repeater is on, as far as this driver last set it.
+    private var repeaterOn = false
+    /// Leave the repeater on between tuner accesses instead of switching it around each one (a retune shortcut).
+    private(set) var keepsRepeaterOn = false
+
+    private func setRepeater(_ on: Bool) throws {
+        try writeDemod(page: 1, 0x01, on ? 0x18 : 0x10)
+        repeaterOn = on
+    }
+
+    /// The tuner is only reachable while the repeater is on. Turned off again afterwards, even on error, unless it is
+    /// being kept on.
     func withI2CRepeater<T>(_ body: () throws -> T) throws -> T {
-        try writeDemod(page: 1, 0x01, 0x18)
-        defer { try? writeDemod(page: 1, 0x01, 0x10) }
+        if keepsRepeaterOn {
+            if !repeaterOn { try setRepeater(true) }
+            return try body()
+        }
+        try setRepeater(true)
+        defer { try? setRepeater(false) }
         return try body()
+    }
+
+    /// Keeps the repeater on between tuner accesses, or switches it off now and goes back to toggling it.
+    func keepRepeaterOn(_ keep: Bool) throws {
+        keepsRepeaterOn = keep
+        if !keep, repeaterOn { try setRepeater(false) }
+    }
+
+    /// Restarts the demodulator (so a new resampler ratio takes effect). The same register holds the repeater bit, so
+    /// this also switches the repeater off.
+    private func softReset() throws {
+        try writeDemod(page: 1, 0x01, 0x14)
+        repeaterOn = false
+        try writeDemod(page: 1, 0x01, 0x10)
     }
 
     // MARK: Start-up
@@ -116,8 +145,7 @@ final class RTL2832U: @unchecked Sendable, I2CBus {
         try writeRegister(.sys, Sys.demodControl, 0xe8)
 
         // Soft reset, then no spectrum inversion / adjacent-channel rejection.
-        try writeDemod(page: 1, 0x01, 0x14)
-        try writeDemod(page: 1, 0x01, 0x10)
+        try softReset()
         try writeDemod(page: 1, 0x15, 0x00)
         try writeDemod(page: 1, 0x16, 0x0000, length: 2)
 
@@ -225,8 +253,7 @@ final class RTL2832U: @unchecked Sendable, I2CBus {
         try writeDemod(page: 1, 0x9f, UInt16(settings.ratio >> 16), length: 2)
         try writeDemod(page: 1, 0xa1, UInt16(settings.ratio & 0xffff), length: 2)
         try setFrequencyCorrection(ppm: correctionPPM)
-        try writeDemod(page: 1, 0x01, 0x14)                     // soft reset so the new ratio takes effect
-        try writeDemod(page: 1, 0x01, 0x10)
+        try softReset()                                         // so the new ratio takes effect
         return settings.actualRate
     }
 
