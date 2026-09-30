@@ -103,7 +103,7 @@ final class IOUSBHostTransport: RTLSDRTransport, @unchecked Sendable {
         do {
             device = try IOUSBHostDevice(__ioService: service, options: [], queue: nil, interestHandler: nil)
         } catch {
-            throw RTLSDRError.openFailed(error.localizedDescription)
+            throw RTLSDRError.openFailed(Self.explainOpenError(error))
         }
 
         // The bulk endpoint belongs to interface 0, which is a child of the device in the registry.
@@ -123,13 +123,18 @@ final class IOUSBHostTransport: RTLSDRTransport, @unchecked Sendable {
                 break
             } catch {
                 device.destroy()
-                throw RTLSDRError.openFailed(error.localizedDescription)
+                throw RTLSDRError.openFailed(Self.explainOpenError(error))
             }
         }
         guard pipe != nil else {
             device.destroy()
             throw RTLSDRError.openFailed("the sample endpoint (0x81) was not found")
         }
+    }
+
+    /// The IOKit error code lives in the NSError; it is what tells "another program has it" from "the sandbox said no".
+    private static func explainOpenError(_ error: Error) -> String {
+        RTLSDRError.explainOpenFailure(code: (error as NSError).code, description: error.localizedDescription)
     }
 
     deinit { close() }

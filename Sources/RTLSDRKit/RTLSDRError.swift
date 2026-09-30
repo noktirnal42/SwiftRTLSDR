@@ -21,7 +21,7 @@ public enum RTLSDRError: Error, LocalizedError, Equatable, Sendable {
         case let .deviceNotFound(serial):
             return "No RTL-SDR with serial \(serial) is connected."
         case let .openFailed(reason):
-            return "Could not open the RTL-SDR: \(reason). Another program may be using it; only one can at a time."
+            return "Could not open the RTL-SDR: \(reason)"
         case let .usb(reason):
             return "USB transfer failed: \(reason)"
         case let .shortTransfer(expected, actual):
@@ -38,6 +38,25 @@ public enum RTLSDRError: Error, LocalizedError, Equatable, Sendable {
             return "The device is already streaming."
         case .closed:
             return "The device has been closed."
+        }
+    }
+
+    /// Turns the IOKit code behind a failed open into a message that says what is actually wrong. macOS reports
+    /// "Failed to create IOUSBHostObject" whether another program has the dongle, the sandbox denied access, or
+    /// the dongle went away, so the code is what tells them apart.
+    public static func explainOpenFailure(code: Int, description: String) -> String {
+        let unsigned = UInt32(truncatingIfNeeded: code)
+        let hex = String(format: "0x%08x", unsigned)
+        let cleaned = description.hasSuffix(".") ? String(description.dropLast()) : description
+        switch unsigned {
+        case 0xe00002c5, 0xe00002d5:      // exclusive access, busy
+            return "\(cleaned) (IOKit \(hex)): another program has the dongle open. Only one program can use it at a time."
+        case 0xe00002e2, 0xe00002c1:      // not permitted, not privileged
+            return "\(cleaned) (IOKit \(hex)): macOS denied access to the USB device. A sandboxed app needs the com.apple.security.device.usb entitlement."
+        case 0xe00002c0:                  // no device
+            return "\(cleaned) (IOKit \(hex)): the dongle was unplugged or is no longer responding."
+        default:
+            return "\(cleaned) (IOKit \(hex))."
         }
     }
 }
