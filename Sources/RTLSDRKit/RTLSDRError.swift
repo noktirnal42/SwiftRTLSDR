@@ -13,6 +13,10 @@ public enum RTLSDRError: Error, LocalizedError, Equatable, Sendable {
     case pllOutOfRange(frequencyHz: Int)
     case alreadyStreaming
     case closed
+    case eepromMalformed(String)
+    case eepromHeaderProtected(offset: Int)
+    case eepromVerifyFailed(offsets: [Int])
+    case invalidSerial(String)
 
     public var errorDescription: String? {
         switch self {
@@ -38,6 +42,14 @@ public enum RTLSDRError: Error, LocalizedError, Equatable, Sendable {
             return "The device is already streaming."
         case .closed:
             return "The device has been closed."
+        case let .eepromMalformed(reason):
+            return "The EEPROM contents are not in the expected layout: \(reason)."
+        case let .eepromHeaderProtected(offset):
+            return String(format: "Refusing to write EEPROM offset 0x%02x: bytes 0-8 hold the USB IDs and flags, and this driver never writes them.", offset)
+        case let .eepromVerifyFailed(offsets):
+            return "The EEPROM did not read back as written at offsets \(offsets.map { String(format: "0x%02x", $0) }.joined(separator: ", ")). Restore from the backup."
+        case let .invalidSerial(reason):
+            return "Invalid serial number: \(reason)."
         }
     }
 }

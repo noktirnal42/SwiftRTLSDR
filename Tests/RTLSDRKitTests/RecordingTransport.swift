@@ -28,22 +28,53 @@ final class RecordingTransport: RTLSDRTransport, @unchecked Sendable {
     /// What the demodulator/system registers read back as. Zero unless a test says otherwise.
     var registerReadValue: UInt8 = 0
 
+    /// The configuration EEPROM at I2C address 0xa0: a one-byte pointer write sets the address, reads return one byte
+    /// and advance, a two-byte write stores a byte. Starts as a generic dongle's image (see `genericEEPROM`).
+    var eeprom: [UInt8] = RecordingTransport.genericEEPROM
+    private var eepromPointer = 0
+    /// Offsets whose writes do not stick (a worn or write-protected EEPROM).
+    var stuckEEPROMOffsets: Set<Int> = []
+
+    /// Header with the IDs 0bda:2838, serial enabled, IR endpoint flag set; strings "Realtek", "RTL2838UHIDIR",
+    /// "00000001"; zeros up to 0x7f and never-written 0xff after that, like the dump described in docs/WHAT-TO-BUILD.md.
+    static let genericEEPROM: [UInt8] = {
+        var bytes: [UInt8] = [0x28, 0x32, 0xda, 0x0b, 0x38, 0x28, 0xa5, 0x16, 0x02]
+        for text in ["Realtek", "RTL2838UHIDIR", "00000001"] {
+            bytes += [UInt8(2 + 2 * text.utf8.count), 0x03] + text.utf8.flatMap { [$0, 0x00] }
+        }
+        bytes += [UInt8](repeating: 0x00, count: 0x80 - bytes.count)
+        return bytes + [UInt8](repeating: 0xff, count: 0x80)
+    }()
+
     var transfers: [Transfer] { lock.lock(); defer { lock.unlock() }; return log }
     var writes: [Transfer] { transfers.filter(\.isWrite) }
     var isStreaming: Bool { lock.lock(); defer { lock.unlock() }; return streamHandler != nil }
     private(set) var closed = false
 
     func vendorRead(value: UInt16, index: UInt16, length: Int) throws -> [UInt8] {
+        lock.lock(); defer { lock.unlock() }
         var answer = [UInt8](repeating: registerReadValue, count: length)
         if (index >> 8) & 0xff == 6, value == 0x34 {                     // I2C block, the tuner's address
             answer = length == 1 ? [tunerStatus[0]] : Array((tunerStatus + [UInt8](repeating: 0, count: 8)).prefix(length))
         }
-        lock.lock(); log.append(Transfer(isWrite: false, value: value, index: index, data: answer)); lock.unlock()
+        if (index >> 8) & 0xff == 6, value == 0xa0 {                     // I2C block, the EEPROM
+            answer = (0..<length).map { _ in
+                defer { eepromPointer = (eepromPointer + 1) % eeprom.count }
+                return eeprom[eepromPointer]
+            }
+        }
+        log.append(Transfer(isWrite: false, value: value, index: index, data: answer))
         return answer
     }
 
     func vendorWrite(value: UInt16, index: UInt16, data: [UInt8]) throws {
-        lock.lock(); log.append(Transfer(isWrite: true, value: value, index: index, data: data)); lock.unlock()
+        lock.lock(); defer { lock.unlock() }
+        if (index >> 8) & 0xff == 6, value == 0xa0, let address = data.first {
+            eepromPointer = Int(address)
+            if data.count == 2, !stuckEEPROMOffsets.contains(Int(address)) { eeprom[Int(address)] = data[1] }
+            if data.count == 2 { eepromPointer = (Int(address) + 1) % eeprom.count }
+        }
+        log.append(Transfer(isWrite: true, value: value, index: index, data: data))
     }
 
     func startBulkStream(

@@ -118,6 +118,13 @@ final class RTL2832U: @unchecked Sendable, I2CBus {
         return try body()
     }
 
+    /// For devices on the RTL2832U's own bus (the EEPROM): the reference talks to them with the repeater off. If it
+    /// is being kept on, the next tuner access switches it on again.
+    func withI2CRepeaterOff<T>(_ body: () throws -> T) throws -> T {
+        if repeaterOn { try setRepeater(false) }
+        return try body()
+    }
+
     /// Keeps the repeater on between tuner accesses, or switches it off now and goes back to toggling it.
     func keepRepeaterOn(_ keep: Bool) throws {
         keepsRepeaterOn = keep
