@@ -8,3 +8,4 @@
 | `dump978-sample-data.txt` | 1143 real UAT frames (439 downlink, 704 uplink), after error correction, in dump978's text format | `sample-data.txt.gz` from dump978 by Oliver Jowett (GPL-2.0-or-later), https://github.com/mutability/dump978 |
 | `dump978-sample-fields.txt` | The fields dump978's own decoder extracts from each of those frames | `Tools/uat-oracle-fields.c`, built against dump978's `uat_decode.c` |
 | `dump978-sample-nexrad.txt` | The NEXRAD blocks in those frames | dump978's `extract_nexrad` |
+| `ism-code-vectors.txt` | Bit buffers (rtl_433's `{bits}hex` notation) that the ISM decoders were given while decoding real recordings, and rtl_433 25.02's JSON for each (`rtl_433 -y`, without the time field) | `Tools/generate-ism-vectors.py` on the recordings of https://github.com/merbanan/rtl_433_tests (not included: that repository has no licence) |

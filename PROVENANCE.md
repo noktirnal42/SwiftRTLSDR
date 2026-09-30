@@ -29,8 +29,13 @@ register meanings come from the reference driver's code and comments.
 | UAT aircraft size table | DO-282B Table 2-35 as used in FlightAware's dump978 (BSD-2-Clause, https://github.com/flightaware/dump978) | 16 (length, width) pairs; the original dump978 decoded the length from the wrong bits. |
 | Reed-Solomon codec (`ReedSolomon.swift`) | Textbook algorithms (Berlekamp-Massey, Chien, Forney) | Written for this package. dump978 uses Phil Karn's LGPL library; that library was compiled only as a test oracle. Parameters (polynomial 0x187, first root 120) are dump978's. |
 | UAT test data | `sample-data.txt.gz` from dump978 (GPL-2.0-or-later) | Real frames, included uncompressed as test data. |
+| ISM sensor decoders (`RTLSDRDecoders/ISM`): envelope and FM baseband, OOK/FSK pulse detection, pulse slicers, bit buffer, checksums, the receive loop and decoder priorities, JSON output, 11 device protocols | rtl_433 release 25.02, GPL-2.0-or-later (https://github.com/merbanan/rtl_433): `baseband.c`, `pulse_detect.c`, `pulse_detect_fsk.c`, `pulse_data.c`, `pulse_slicer.c`, `bitbuffer.c`, `bit_util.c`, `rtl_433.c`, `r_api.c`, `output_file.c`, `fileformat.c` and `devices/` `rubicson.c`, `oregon_scientific.c`, `fineoffset.c`, `nexus.c`, `ambient_weather.c`, `generic_remote.c`, `acurite.c`, `lacrosse_tx141x.c`, `bresser_5in1.c`, `bresser_6in1.c` | Ported to Swift, keeping the fixed-point and single-precision arithmetic so that both find the same packages and print the same numbers; provenance comments in each file. Every ported file says "version 2 of the License, or (at your option) any later version". rtl_433 itself is the oracle: its output on the rtl_433_tests recordings must match byte for byte (see docs/DECODERS.md). |
+| ISM test vectors | Bit buffers the decoders saw in [rtl_433_tests](https://github.com/merbanan/rtl_433_tests) recordings, with rtl_433's output for each (`Tools/generate-ism-vectors.py`) | Short bit strings and decoded values only. The recordings are not included: that repository has no licence. |
 | Tests, fake dongle, trace logger, CLI, tools | Written for this package | New. |
 | Golden traces | Recorded from an unmodified `rtl_sdr` (Homebrew librtlsdr 2.0.2) on real hardware | Test data: what the reference wrote on the wire. |
+
+The rtl_433 source ported is release 25.02 from Ubuntu's source package `rtl-433_25.02.orig.tar.gz` (SHA-256
+`5a409ea10e6d3d7d4aa5ea91d2d6cc92ebb2d730eb229c7b37ade65458223432`).
 
 The librtlsdr source consulted for the EEPROM and `rtl_tcp` work (2026-09-30) is release 2.0.2, the version the golden
 traces were recorded with, taken from Ubuntu's source package `rtl-sdr_2.0.2.orig.tar.xz` (SHA-256
@@ -52,5 +57,6 @@ close). It also showed where this driver deliberately differs from the reference
 ## Things not taken
 
 Nothing from `libusb`, from the RTL-SDR Blog fork's changes (V3/V4 support, VCO-current rewrite), from the
-`librtlsdr/librtlsdr` community fork (harmonic reception, extra gain stages), or from `rtl_433`/`rtl_power`/`rtl_fm`.
-Those were read for background only (see LEVEL-DIFFERENCES.md for what was learned and cited).
+`librtlsdr/librtlsdr` community fork (harmonic reception, extra gain stages), or from `rtl_power`/`rtl_fm`.
+Those were read for background only (see LEVEL-DIFFERENCES.md for what was learned and cited). rtl_433 is the source of
+the ISM decoders, as listed above, but nothing of it is in the driver itself.

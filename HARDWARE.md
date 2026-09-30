@@ -49,6 +49,7 @@ hardware. The command in the right-hand column is the check to run. Please add t
 | `rtl_tcp` server | SDR#, GQRX or SDR++ connect, tune and show a live spectrum; a slow network drops data instead of stalling | `rtlsdr-tool serve --address 0.0.0.0` |
 | ADS-B decoder | Aircraft appear with sensible positions and callsigns; compare with dump1090 or an online tracker at the same time; count messages per minute against dump1090 on the same antenna | `rtlsdr-tool adsb --lat <yours> --lon <yours>` (a 1090 MHz antenna helps a lot) |
 | UAT decoder (US only) | Ground-station uplinks decode; METARs match the published ones; radar PNGs match a radar map for the same time | `rtlsdr-tool uat --nexrad radar/` near a UAT ground station |
+| ISM sensor decoder | The neighbourhood's weather stations and thermometers appear, with the readings their displays show; run rtl_433 on a second dongle (or on a `capture` at 250 kS/s) and compare; the 250 kS/s rate works on this driver | `rtlsdr-tool ism --json` (433.92 MHz); `--freq 868.3e6` or `915e6` for FSK sensors |
 
 ## Not tested
 

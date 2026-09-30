@@ -17,6 +17,24 @@ notices are reproduced here as the license requires. See PROVENANCE.md for exact
     Copyright (C) 2015 Oliver Jowett <oliver@mutability.co.uk>
     https://github.com/mutability/dump978  (GNU GPL version 2 or later)
 
+  rtl_433 - "a generic data receiver, mainly for the 433.92 MHz, 868 MHz (SRD), 315 MHz, 345 MHz, and 915 MHz ISM
+  bands", whose receive chain and device decoders RTLSDRDecoders ports (release 25.02, GNU GPL version 2 or later)
+    Copyright (C) 2012 by Benjamin Larsson <benjamin@southpole.se> (baseband, receive loop)
+    Copyright (C) 2012 by Steve Markgraf <steve@steve-m.de> (receive loop)
+    Copyright (C) 2015 Tommy Vestermark (baseband, pulse detection, slicers, bit buffer, bit utilities, generic remote)
+    Copyright (C) 2019 Benjamin Larsson (FSK pulse detection)
+    Copyright (C) 2019-2022 Christian W. Zuckschwerdt <zany@triq.net> (pulse detection, API, JSON output, Bresser,
+                       Fine Offset)
+    Copyright (C) 2015 nebman (generic remote)
+    Copyright (c) 2015 Jens Jenson, Helge Weissig, David Ray Thompson, Robert Terzi (Acurite)
+    Copyright (C) 2015 Helge Weissig, Denis Bodor, Tommy Vestermark, Karl Lattimer, deennoo, pclov3r, onlinux,
+                       Pasquale Fiorillo (Oregon Scientific)
+    Copyright (C) 2017 Robert Fraczkiewicz <aromring@gmail.com>, with changes by Andrew Rivett (LaCrosse TX141)
+    Copyright (C) 2017 Tommy Vestermark (Fine Offset)
+    Copyright (C) 2018 Daniel Krueger (Bresser 5-in-1)
+    and the other rtl_433 contributors listed in its AUTHORS file
+    https://github.com/merbanan/rtl_433
+
   Rafael Micro R820T/R828D driver (src/tuner_r82xx.c in rtl-sdr), itself
   "a heavily modified version of the driver found in the Linux kernel" (drivers/media/tuners/r820t.c)
     Copyright (C) 2013 Mauro Carvalho Chehab <mchehab@redhat.com>
