@@ -126,6 +126,7 @@ struct ISMBuildingBlockTests {
         #expect(bits.row(0)[0] == 0xab && bits.row(0)[1] == 0xc0)
         #expect(bits.row(1)[0] == 0xf0)
         #expect(bits.codes == ["{12}abc0", "{4}f0", "{8}ff"])
+        #expect(BitBuffer(code: "{12}a\n").codes == ["{12}aa00"], "rtl_433 repeats the last digit for any other character")
 
         bits.invert()
         #expect(bits.row(0)[0] == 0x54 && bits.row(0)[1] == 0x30, "only the row's 12 bits are inverted")

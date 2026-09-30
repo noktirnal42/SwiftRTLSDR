@@ -51,6 +51,7 @@ func ism(_ arguments: Arguments) {
         protocols = Set(list.split(separator: ",").compactMap { Int($0) })
     }
     let devices = ISMDevices.all.filter { protocols?.contains($0.protocolNumber) ?? true }
+    if devices.isEmpty { fail("none of those protocols is ported; `rtlsdr-tool ism --list-protocols` lists them") }
     if let code = arguments.option("code") {
         // rtl_433's -y: decode a bit buffer given as text.
         for event in ISMReceiver.decode(code: code, devices: devices) { print(json ? event.report.json() : event.report.description) }
@@ -120,7 +121,8 @@ func ism(_ arguments: Arguments) {
         let actualRate = try device.setSampleRate(rate)
         try device.setCenterFrequency(frequency)
         try arguments.applyGain(to: device, default: "auto")
-        let receiver = ISMReceiver(sampleRate: Int(actualRate), frequency: frequency, devices: devices, fskDetector: fskDetector)
+        // Timings use the nominal rate, as rtl_433 does (the dongle's actual rate differs by a few parts per million).
+        let receiver = ISMReceiver(sampleRate: rate, frequency: frequency, devices: devices, fskDetector: fskDetector)
         let printer = ISMPrinter(receiver: receiver, json: json, analyze: arguments.flag("analyze"))
         let backlog = Backlog(label: "ism")
         let failure = FailureBox()

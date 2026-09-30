@@ -130,7 +130,9 @@ public final class ISMReceiver {
                     let isFSK = package == .fsk
                     let pulses = isFSK ? detector.fsk : detector.ook
                     if isFSK { fskPackages += 1 } else { ookPackages += 1 }
-                    let found = decode(pulses, isFSK: isFSK)
+                    // Stamped with the start of the envelope's package, as rtl_433 does (an FSK train that ran past
+                    // the pulse limit has shed its start).
+                    let found = decode(pulses, isFSK: isFSK, start: detector.ook.offset)
                     events += found
                     onPackage?(pulses, isFSK, found.count)
                 }
@@ -160,14 +162,14 @@ public final class ISMReceiver {
     }
 
     /// Runs the devices by priority; a later priority runs only if nothing decoded at an earlier one.
-    private func decode(_ pulses: PulseTrain, isFSK: Bool) -> [ISMEvent] {
+    private func decode(_ pulses: PulseTrain, isFSK: Bool, start: Int) -> [ISMEvent] {
         var events: [ISMEvent] = []
         for priority in Set(devices.map(\.priority)).sorted() {
             for device in devices where device.priority == priority && device.modulation.isFSK == isFSK {
                 var reports: [ISMReport] = []
                 let observer: PulseSlicer.Observer? = onBits.map { onBits in { onBits(device.protocolNumber, $0, $1) } }
                 _ = PulseSlicer.run(device, on: pulses, into: &reports, observer: observer)
-                events += reports.map { ISMEvent(report: $0, protocolNumber: device.protocolNumber, sampleIndex: pulses.offset, isFSK: isFSK) }
+                events += reports.map { ISMEvent(report: $0, protocolNumber: device.protocolNumber, sampleIndex: start, isFSK: isFSK) }
             }
             if !events.isEmpty { break }
         }

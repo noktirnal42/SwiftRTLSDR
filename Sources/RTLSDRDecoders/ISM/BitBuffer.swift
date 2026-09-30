@@ -33,36 +33,35 @@ public struct BitBuffer: Sendable {
         let characters = Array(code)
         var index = 0
         var width = -1
+        var nibble: UInt8 = 0                           // as in rtl_433, any other character repeats the last digit
         while index < characters.count {
             let character = characters[index]
-            if character == " " {
+            index += 1
+            if character == " " { continue }
+            if character == "0" && index < characters.count && (characters[index] == "x" || characters[index] == "X") {
                 index += 1
-                continue
-            }
-            if character == "0" && index + 1 < characters.count && (characters[index + 1] == "x" || characters[index + 1] == "X") {
-                index += 2
                 continue
             }
             if character == "{" {
                 if width >= 0 { setWidth(width) }
                 if rowCount > 0 { addRow() }
                 var digits = ""
-                index += 1
-                while index < characters.count, characters[index].isNumber { digits.append(characters[index]); index += 1 }
+                while index < characters.count, let digit = characters[index].wholeNumberValue, digit < 10 {
+                    digits.append(characters[index])
+                    index += 1
+                }
                 while index < characters.count, characters[index].isWhitespace { index += 1 }
                 width = min(Int(digits) ?? 0, Self.maximumRows * Self.rowBytes * 8)
-                if index < characters.count && characters[index] == "}" { index += 1 }
+                if index < characters.count { index += 1 }      // the "}" (whatever is there is skipped)
                 continue
             }
             if character == "/" {
                 if width >= 0 { setWidth(width); width = -1 }
                 addRow()
-                index += 1
                 continue
             }
-            let nibble = UInt8(character.hexDigitValue ?? 0)
+            if let value = character.hexDigitValue, character.isASCII { nibble = UInt8(value) }
             for shift in [3, 2, 1, 0] { addBit(nibble >> UInt8(shift) & 1) }
-            index += 1
         }
         if width >= 0 { setWidth(width) }
     }
