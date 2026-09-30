@@ -59,6 +59,12 @@ recorded frames. The on-air checks are listed in [HARDWARE.md](../HARDWARE.md).
 * **What real data did not cover:** the sample recording has no rain (every radar bin is intensity 0), so colour
   rendering is covered by a synthetic test only; there were no CONUS mosaics (product 64) in it either.
 
+## Speed
+
+Decoding the oracle recordings on one core of the Linux build machine: ADS-B 2.4 s of signal in 0.29 s (release build)
+or 4.5 s (debug build); UAT 1.17 s of signal in 0.04 s (release) or 0.84 s (debug). Live, a decoder that falls behind
+drops whole blocks and reports it rather than queueing without limit, so use a release build for ADS-B.
+
 ## Rerunning the comparisons
 
 The oracles need dump1090-mutability, dump978 and a few Python packages; none of that is needed for `swift test`.

@@ -10,6 +10,7 @@ private final class UATPrinter: @unchecked Sendable {
     private let nexradDirectory: String?
     private var composites: [String: NEXRADComposite] = [:]
     private var written: [String: Int] = [:]          // blocks in a mosaic when it was last written
+    private var updated: [String: Double] = [:]       // when a mosaic last gained a block (wall clock, live only)
 
     init(raw: Bool, nexradDirectory: String?) {
         self.raw = raw
@@ -18,6 +19,11 @@ private final class UATPrinter: @unchecked Sendable {
 
     func process(_ block: [UInt8]) {
         for frame in demodulator.process(block) { handle(frame) }
+    }
+
+    /// End of a recording: decode what the demodulator still holds back.
+    func finish() {
+        for frame in demodulator.flush() { handle(frame) }
     }
 
     func handle(_ frame: UATFrame) {
@@ -36,6 +42,7 @@ private final class UATPrinter: @unchecked Sendable {
                 for block in blocks {
                     let key = "\(block.product.rawValue.lowercased())-" + String(format: "%02d%02d", block.hours, block.minutes)
                     composites[key, default: NEXRADComposite(product: block.product, hours: block.hours, minutes: block.minutes)].add(block)
+                    updated[key] = monotonicSeconds()
                 }
                 guard !raw else { continue }
                 let time = String(format: "%02d:%02d", product.hours, product.minutes)
@@ -65,21 +72,33 @@ private final class UATPrinter: @unchecked Sendable {
         return text
     }
 
-    /// Writes each mosaic that gained blocks since it was last written: a PNG and a text file with its bounds.
-    func writeMosaics() {
+    /// Writes each mosaic that gained blocks since it was last written: a PNG and a text file with its bounds. Mosaics
+    /// that have not changed for `forgetAfter` seconds are then forgotten, so a long run neither grows without limit nor
+    /// merges tomorrow's 12:00 mosaic into today's (products carry only hours and minutes).
+    func writeMosaics(forgetAfter: Double? = nil) {
+        defer {
+            if let forgetAfter {
+                let now = monotonicSeconds()
+                for (key, when) in updated where now - when > forgetAfter {
+                    composites[key] = nil
+                    updated[key] = nil
+                    written[key] = nil
+                }
+            }
+        }
         guard let directory = nexradDirectory else { return }
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-        for (key, composite) in composites where composite.blocks.count != written[key] {
+        for (key, composite) in composites where composite.blockCount != written[key] {
             guard let image = composite.image(), let bounds = composite.bounds else { continue }
             let base = (directory as NSString).appendingPathComponent("nexrad-\(key)")
             do {
                 try Data(image.png).write(to: URL(fileURLWithPath: base + ".png"))
                 let info = String(format: "north %.4f\nsouth %.4f\nwest %.4f\neast %.4f\nblocks %d\nwidth %d\nheight %d\n",
                                   Double(bounds.north) / 60, Double(bounds.south) / 60, Double(bounds.west) / 60, Double(bounds.east) / 60,
-                                  composite.blocks.count, image.width, image.height)
+                                  composite.blockCount, image.width, image.height)
                 try info.write(toFile: base + ".txt", atomically: true, encoding: .utf8)
-                written[key] = composite.blocks.count
-                if !raw { print("wrote \(base).png (\(composite.blocks.count) blocks, \(image.width)x\(image.height))") }
+                written[key] = composite.blockCount
+                if !raw { print("wrote \(base).png (\(composite.blockCount) blocks, \(image.width)x\(image.height))") }
             } catch {
                 FileHandle.standardError.write(Data("cannot write \(base).png: \(error.localizedDescription)\n".utf8))
             }
@@ -106,8 +125,7 @@ func uat(_ arguments: Arguments) {
             if chunk.isEmpty { break }
             printer.process([UInt8](chunk))
         }
-        // The demodulator holds back one frame's worth of samples as look-ahead: flush it with silence.
-        printer.process([UInt8](repeating: 128, count: 20_000))
+        printer.finish()
         printer.writeMosaics()
         return
     }
@@ -119,24 +137,25 @@ func uat(_ arguments: Arguments) {
         try device.setSampleRate(UAT.sampleRate)
         try device.setCenterFrequency(Int(arguments.double("freq", default: Double(UAT.frequency))))
         try arguments.applyGain(to: device, default: "49.6")
-        let queue = DispatchQueue(label: "uat")
+        let backlog = Backlog(label: "uat")
         let failure = FailureBox()
         try device.startStreaming(onError: { failure.set($0) }) { block in
-            let copy = Array(block)
-            queue.async { printer.process(copy) }
+            backlog.submit(block) { printer.process($0) }
         }
         if !arguments.flag("raw") { print("listening on 978 MHz; Ctrl-C to stop") }
         let started = monotonicSeconds()
         var lastWrite = started
         while monotonicSeconds() - started < seconds, failure.value == nil {
             Thread.sleep(forTimeInterval: 0.5)
+            let dropped = backlog.newlyDropped()
+            if dropped > 0 { FileHandle.standardError.write(Data("warning: decoding fell behind; dropped \(dropped) block(s)\n".utf8)) }
             if monotonicSeconds() - lastWrite > 60 {
                 lastWrite = monotonicSeconds()
-                queue.async { printer.writeMosaics() }
+                backlog.async { printer.writeMosaics(forgetAfter: 1_800) }
             }
         }
         device.stopStreaming()
-        queue.sync { printer.writeMosaics() }
+        backlog.sync { printer.writeMosaics() }
         if let error = failure.value { fail(error.localizedDescription) }
     } catch { fail(error.localizedDescription) }
 }

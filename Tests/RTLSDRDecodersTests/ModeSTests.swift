@@ -49,9 +49,6 @@ struct ModeSCRCTests {
         var formatHit = clean
         formatHit[0] ^= 0x10                                // bit 3, inside the downlink format
         #expect(ModeSCRC.correctSingleBit(&formatHit) == nil)
-        var twoBits = clean
-        twoBits[6] ^= 0x81
-        #expect(ModeSCRC.correctSingleBit(&twoBits) == nil || twoBits != clean)
     }
 
     @Test func theSyndromeOfAnAddressParityReplyIsTheAddress() throws {

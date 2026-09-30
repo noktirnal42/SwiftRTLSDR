@@ -3,9 +3,11 @@ import Foundation
 
 /// Merges Mode S messages into one record per aircraft, like the table `dump1090 --interactive` shows.
 ///
-/// Positions are resolved from an even and an odd CPR fix less than 10 s apart, then locally from the last good position
-/// (or from the receiver's location, if given, for the first fix). A new position that would need more than
-/// `maximumSpeedKnots` to reach from the last one is dropped as a probable decoding error.
+/// Positions come from an even and an odd CPR fix less than 10 s apart whenever such a pair exists (global decoding needs
+/// no reference, so it also corrects a wrong track); otherwise from one fix and the aircraft's recent position; otherwise
+/// from one fix and the receiver's location. A position resting on the receiver's location is `positionIsProvisional`
+/// until a pair confirms it, because an aircraft more than about 180 NM away resolves to a wrong, mirrored position.
+/// A position that would need more than `maximumSpeedKnots` to reach from a confirmed one is dropped as a decoding error.
 public final class AircraftTracker {
     public struct Aircraft: Sendable, Equatable {
         public var address: UInt32
@@ -22,11 +24,15 @@ public final class AircraftTracker {
         public var firstSeen: Double
         public var lastSeen: Double
         public var lastPosition: Double?
+        /// The position rests on the receiver's location, not yet on an even/odd pair.
+        public var positionIsProvisional = false
 
         public var addressHex: String { String(format: "%06X", address) }
     }
 
     public var maximumSpeedKnots = 1_000.0
+    /// Positions resolved against the receiver's location farther away than this are dropped.
+    public var maximumRangeNM = 250.0
     private let receiver: (latitude: Double, longitude: Double)?
     private var records: [UInt32: Aircraft] = [:]
     private var lastFix: [UInt32: (even: (CPRPosition, Double)?, odd: (CPRPosition, Double)?)] = [:]
@@ -91,21 +97,33 @@ public final class AircraftTracker {
         lastFix[record.address] = fixes
 
         var candidate: (latitude: Double, longitude: Double)?
-        if let latitude = record.latitude, let longitude = record.longitude, let when = record.lastPosition, time - when < 60 {
+        var provisional = false
+        var global = false
+        if let even = fixes.even, let odd = fixes.odd, abs(even.1 - odd.1) < 10,
+           let position = CPR.global(even: even.0, odd: odd.0, newestIsOdd: fix.isOdd) {
+            candidate = position
+            global = true
+        } else if let latitude = record.latitude, let longitude = record.longitude, let when = record.lastPosition, time - when < 60 {
             candidate = CPR.local(fix, reference: (latitude, longitude))
-        } else if let even = fixes.even, let odd = fixes.odd, abs(even.1 - odd.1) < 10 {
-            candidate = CPR.global(even: even.0, odd: odd.0, newestIsOdd: fix.isOdd)
+            provisional = record.positionIsProvisional
         } else if let receiver {
-            candidate = CPR.local(fix, reference: receiver)
+            let position = CPR.local(fix, reference: receiver)
+            guard Self.distanceNM(receiver.latitude, receiver.longitude, position.latitude, position.longitude) <= maximumRangeNM else { return }
+            candidate = position
+            provisional = true
         }
         guard let candidate else { return }
-        if let latitude = record.latitude, let longitude = record.longitude, let when = record.lastPosition {
+        // A confirmed position limits how far the next one can be. A provisional one does not stop a global fix from
+        // replacing it: that is how a mirrored first fix gets corrected.
+        if let latitude = record.latitude, let longitude = record.longitude, let when = record.lastPosition,
+           !(global && record.positionIsProvisional) {
             let reach = maximumSpeedKnots * max(time - when, 1) / 3600 + 5                // nautical miles, with slack
             guard Self.distanceNM(latitude, longitude, candidate.latitude, candidate.longitude) <= reach else { return }
         }
         record.latitude = candidate.latitude
         record.longitude = candidate.longitude
         record.lastPosition = time
+        record.positionIsProvisional = provisional
     }
 
     /// Great-circle distance in nautical miles.

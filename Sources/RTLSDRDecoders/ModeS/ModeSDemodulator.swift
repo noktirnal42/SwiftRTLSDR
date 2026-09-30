@@ -24,7 +24,8 @@ public struct ModeSFrame: Sendable, Equatable {
 /// * Replies that overlay the address on the parity (DF0/4/5/16/20/21): accepted only when the recovered address was
 ///   recently confirmed, since any bit pattern "recovers" some address.
 ///
-/// An address is confirmed by a DF11/17/18 frame with a zero syndrome (or by `confirm(address:)`).
+/// An address is confirmed by a zero-syndrome DF17, DF11 or DF18 (CF 0) frame, or by `confirm(address:)`; frames that
+/// were accepted only because their address was known do not extend its life.
 ///
 /// Feed blocks in order with `process`; state carries across blocks, so frames straddling a boundary are found.
 public final class ModeSDemodulator {
@@ -53,6 +54,7 @@ public final class ModeSDemodulator {
 
     private var carry: [UInt16] = []           // magnitudes not yet fully examined, from the previous block
     private var carryStart = 0                 // stream index of carry[0]
+    private var pendingByte: UInt8?            // an I without its Q, when a block had an odd length
     private var knownAddresses: [UInt32: Int] = [:]
     public private(set) var framesFound = 0
 
@@ -69,14 +71,34 @@ public final class ModeSDemodulator {
 
     public func process(_ block: UnsafeBufferPointer<UInt8>) -> [ModeSFrame] {
         var magnitude = carry
-        magnitude.reserveCapacity(carry.count + block.count / 2)
-        for pair in 0..<(block.count / 2) {
-            magnitude.append(Self.magnitudes[Int(block[2 * pair]) << 8 | Int(block[2 * pair + 1])])
+        magnitude.reserveCapacity(carry.count + block.count / 2 + 1)
+        var next = 0
+        if let i = pendingByte, !block.isEmpty {
+            magnitude.append(Self.magnitudes[Int(i) << 8 | Int(block[0])])
+            pendingByte = nil
+            next = 1
         }
+        while next + 1 < block.count {
+            magnitude.append(Self.magnitudes[Int(block[next]) << 8 | Int(block[next + 1])])
+            next += 2
+        }
+        if next < block.count { pendingByte = block[next] }
+        return scan(magnitude, lookAhead: true)
+    }
+
+    /// Examines the samples still held back as look-ahead. Call once, at the end of a recording.
+    public func flush() -> [ModeSFrame] {
+        pendingByte = nil
+        return scan(carry, lookAhead: false)
+    }
+
+    private func scan(_ input: [UInt16], lookAhead: Bool) -> [ModeSFrame] {
+        // Without look-ahead the stream has ended: pad with silence so that short frames near the end can be read.
+        let magnitude = lookAhead ? input : input + [UInt16](repeating: 0, count: Self.longFrameSamples)
         let base = carryStart
         var frames: [ModeSFrame] = []
         var index = 0
-        let lastStart = magnitude.count - Self.longFrameSamples
+        let lastStart = lookAhead ? magnitude.count - Self.longFrameSamples : input.count - 1
         while index <= lastStart {
             if let frame = frame(at: index, in: magnitude, streamIndex: base + index) {
                 frames.append(frame)
@@ -86,9 +108,9 @@ public final class ModeSDemodulator {
             }
         }
         // Keep what could still start a frame once more samples arrive.
-        let keepFrom = max(0, index)
-        carry = Array(magnitude[min(keepFrom, magnitude.count)...])
-        carryStart = base + min(keepFrom, magnitude.count)
+        let keepFrom = min(max(0, index), input.count)
+        carry = lookAhead ? Array(input[keepFrom...]) : []
+        carryStart = base + (lookAhead ? keepFrom : input.count)
         framesFound += frames.count
         let now = carryStart
         if knownAddresses.count > 4096 || frames.count > 0 {
@@ -105,29 +127,35 @@ public final class ModeSDemodulator {
 
         // Pulses at samples 0, 2, 7 and 9 with gaps between them: the classic pattern, for pulses that start on (or
         // close to) a sample boundary.
+        // This runs for every sample, so it sticks to scalar arithmetic and rejects the common case (noise) early.
+        let q11 = at(11), q12 = at(12), q13 = at(13), q14 = at(14)
         var aligned = p0 > p1 && p1 < p2 && p2 > p3 && p3 < p0 && p4 < p0 && p5 < p0 && p6 < p0 && p7 > p8 && p8 < p9 && p9 > p6
         if aligned {
             let high = (p0 + p2 + p7 + p9) / 6
-            aligned = p4 < high && p5 < high && (11...14).allSatisfy { at($0) < high }
+            aligned = p4 < high && p5 < high && q11 < high && q12 < high && q13 < high && q14 < high
         }
 
         // A pulse that starts part-way through a sample puts the rest of its energy in the next one, which breaks the
         // comparisons above. Then each pulse's two samples together must stand well above every quiet sample (4-6 and
         // 11-14 are empty for any straddle under a whole sample).
-        let pairs = [p0 + p1, p2 + p3, p7 + p8, p9 + p10]
-        let total = pairs.reduce(0, +)
+        let pairA = p0 + p1, pairB = p2 + p3, pairC = p7 + p8, pairD = p9 + p10
+        let weakest = min(min(pairA, pairB), min(pairC, pairD))
+        if !aligned {
+            let loudestQuiet = max(max(max(p4, p5), max(p6, q11)), max(max(q12, q13), q14))
+            guard weakest > loudestQuiet else { return nil }
+        }
+        let total = pairA + pairB + pairC + pairD
         let split = Double(p1 + p3 + p8 + p10) / Double(max(1, total))
         if !aligned {
-            let quiet = [p4, p5, p6, at(11), at(12), at(13), at(14)]
             // Straddles over three quarters of a sample are left to the next start position, where they read as
             // under a quarter: each frame is then accepted at one position only.
-            let weakest = pairs.min()!
-            guard split <= 0.75, weakest * 2 > pairs.max()!, weakest > quiet.max()!,
-                  weakest * quiet.count > 3 * quiet.reduce(0, +) else { return nil }
+            let strongest = max(max(pairA, pairB), max(pairC, pairD))
+            let quietSum = p4 + p5 + p6 + q11 + q12 + q13 + q14
+            guard split <= 0.75, weakest * 2 > strongest, weakest * 7 > 3 * quietSum else { return nil }
         }
 
         // First attempt: a bit is 1 when its first half carries more energy. Second: the straddle model.
-        let preamble = aligned ? (p0, p2, p7, p9) : (pairs[0], pairs[1], pairs[2], pairs[3])
+        let preamble = aligned ? (p0, p2, p7, p9) : (pairA, pairB, pairC, pairD)
         if split < 0.5, let frame = accept(slice(m, start), preamble: preamble, streamIndex: streamIndex) { return frame }
         guard split > 0.05 else { return nil }
         return accept(sliceStraddled(m, start, split: split, amplitude: Double(total) / 4), preamble: preamble, streamIndex: streamIndex)
@@ -184,6 +212,9 @@ public final class ModeSDemodulator {
         var corrected: Int?
         var recovered: UInt32?
         let syndrome = ModeSCRC.syndrome(message)
+        // Only a clean frame that carries a real ICAO address confirms it: DF17, DF11 with no interrogator code, and
+        // DF18 with CF 0. (Other DF18 control fields carry anonymous or TIS-B track addresses.)
+        let confirms = syndrome == 0 && (format == 17 || format == 11 || (format == 18 && message[0] & 0x07 == 0))
         switch format {
         case 17, 18:
             if syndrome != 0 {
@@ -202,7 +233,7 @@ public final class ModeSDemodulator {
         }
 
         let decoded = ModeSMessage(bytes: message, address: recovered)
-        if format == 11 || format == 17 || format == 18 { knownAddresses[decoded.address] = streamIndex }
+        if confirms { knownAddresses[decoded.address] = streamIndex }
         let level = Double(preamble.0 + preamble.1 + preamble.2 + preamble.3) / 4 / Self.fullScale
         return ModeSFrame(message: decoded, sampleIndex: streamIndex, signalDBFS: 20 * log10(max(level, 1e-6)), correctedBit: corrected)
     }

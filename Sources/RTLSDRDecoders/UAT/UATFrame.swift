@@ -3,6 +3,7 @@
 // UAT (978 MHz Universal Access Transceiver) framing and forward error correction.
 // Frame sizes, sync words, code parameters and acceptance limits follow dump978 by Oliver Jowett
 // (GPL-2.0-or-later; https://github.com/mutability/dump978, uat.h and fec.c). See PROVENANCE.md.
+import Foundation
 
 /// A UAT frame after error correction: payload bytes only (parity removed).
 public struct UATFrame: Sendable, Equatable {

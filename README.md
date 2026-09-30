@@ -127,9 +127,12 @@ swift run rtlsdr-tool scan --from 400e6 --to 406e6 --csv spectrum.csv # sweep an
 swift run rtlsdr-tool eeprom --out backup.bin                         # show (and back up) the EEPROM
 swift run rtlsdr-tool set-serial ROOF-01 --device 1                   # dry run; add --write to program it
 swift run rtlsdr-tool serve --address 0.0.0.0                         # rtl_tcp server on port 1234
-swift run rtlsdr-tool adsb --lat 37.4 --lon -122.1                    # aircraft on 1090 MHz
-swift run rtlsdr-tool uat --nexrad radar/                             # 978 MHz: aircraft, weather text, radar PNGs
+swift run -c release rtlsdr-tool adsb --lat 37.4 --lon -122.1         # aircraft on 1090 MHz
+swift run -c release rtlsdr-tool uat --nexrad radar/                  # 978 MHz: aircraft, weather text, radar PNGs
 ```
+
+Use a release build for the decoders: a debug build decodes ADS-B at about half real speed (it then drops blocks and
+says so), a release build at about eight times real speed.
 
 Every command takes `--device <index>` (as `list` numbers them) or `--serial <serial>`.
 

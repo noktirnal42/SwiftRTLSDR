@@ -33,6 +33,7 @@ public final class UATDemodulator {
 
     private var carry: [UInt16] = []
     private var carryStart = 0
+    private var pendingByte: UInt8?            // an I without its Q, when a block had an odd length
     public private(set) var framesFound = 0
 
     public init() {}
@@ -43,9 +44,32 @@ public final class UATDemodulator {
 
     public func process(_ block: UnsafeBufferPointer<UInt8>) -> [UATFrame] {
         var phi = carry
-        phi.reserveCapacity(carry.count + block.count / 2)
-        for pair in 0..<(block.count / 2) { phi.append(Self.phases[Int(block[2 * pair]) << 8 | Int(block[2 * pair + 1])]) }
+        phi.reserveCapacity(carry.count + block.count / 2 + 1)
+        var next = 0
+        if let i = pendingByte, !block.isEmpty {
+            phi.append(Self.phases[Int(i) << 8 | Int(block[0])])
+            pendingByte = nil
+            next = 1
+        }
+        while next + 1 < block.count {
+            phi.append(Self.phases[Int(block[next]) << 8 | Int(block[next + 1])])
+            next += 2
+        }
+        if next < block.count { pendingByte = block[next] }
+        return scan(phi)
+    }
 
+    /// Examines the samples still held back as look-ahead. Call once, at the end of a recording.
+    public func flush() -> [UATFrame] {
+        pendingByte = nil
+        // Pad with a steady phase: frames that ended before the recording did are then all within reach.
+        let padded = carry + [UInt16](repeating: carry.last ?? 0, count: 2 * (UAT.syncBits + Self.longestFrameBits) + 2)
+        let frames = scan(padded)
+        carry = []
+        return frames
+    }
+
+    private func scan(_ phi: [UInt16]) -> [UATFrame] {
         var frames: [UATFrame] = []
         var sync0: UInt64 = 0, sync1: UInt64 = 0
         let mask: UInt64 = (1 << UInt64(UAT.syncBits)) - 1
@@ -57,14 +81,25 @@ public final class UATDemodulator {
             defer { bit += 1 }
             guard bit >= UAT.syncBits else { continue }
 
-            for (sync, kind) in [(UAT.downlinkSync, UATFrame.Kind.downlink), (UAT.uplinkSync, .uplink)] {
-                let first = Self.close(sync0, sync), second = Self.close(sync1, sync)
+            // Aircraft sync first, then ground station (only one is tried per position, as in dump978).
+            let kind: UATFrame.Kind
+            let sync: UInt64
+            var first = Self.close(sync0, UAT.downlinkSync), second = Self.close(sync1, UAT.downlinkSync)
+            if first || second {
+                (kind, sync) = (.downlink, UAT.downlinkSync)
+            } else {
+                first = Self.close(sync0, UAT.uplinkSync)
+                second = Self.close(sync1, UAT.uplinkSync)
                 guard first || second else { continue }
+                (kind, sync) = (.uplink, UAT.uplinkSync)
+            }
+            do {
                 let startBit = bit - UAT.syncBits + 1
                 let index = startBit * 2 + (first ? 0 : 1)
-                // The match may be a sample early or late: demodulate at both and keep the one needing fewer repairs.
+                // The match may be a sample early or late: demodulate at both and keep the one needing fewer repairs
+                // (a clean first attempt cannot be beaten, so the second is skipped then).
                 let a = demodulate(phi, at: index, sync: sync, kind: kind)
-                let b = demodulate(phi, at: index + 1, sync: sync, kind: kind)
+                let b = a?.frame.correctedSymbols == 0 ? nil : demodulate(phi, at: index + 1, sync: sync, kind: kind)
                 let best: (frame: UATFrame, bits: Int, at: Int)?
                 switch (a, b) {
                 case let (a?, b?): best = a.frame.correctedSymbols <= b.frame.correctedSymbols ? (a.frame, a.bits, index) : (b.frame, b.bits, index + 1)
@@ -81,7 +116,6 @@ public final class UATDemodulator {
                     sync0 = 0
                     sync1 = 0
                 }
-                break
             }
         }
         // Keep the last sync word's worth of bits too, so a sync word split across blocks is still found.

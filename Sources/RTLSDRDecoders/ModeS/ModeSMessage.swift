@@ -19,7 +19,7 @@ public struct ModeSMessage: Sendable, Equatable {
         case identity(String)
         /// DF11: reply to an all-call; `capability` is the CA field.
         case allCall(capability: Int)
-        /// DF17, DF18 (CF 0): ADS-B.
+        /// DF17, DF18 (CF 0 or 1): ADS-B.
         case extendedSquitter(ExtendedSquitter)
         /// Anything else (DF24 Comm-D, TIS-B, reserved formats).
         case other
@@ -46,7 +46,7 @@ public struct ModeSMessage: Sendable, Equatable {
             content = .allCall(capability: Int(bits.value(6, 8)))
         case 17:
             content = .extendedSquitter(ExtendedSquitter(bits))
-        case 18 where bits.value(6, 8) == 0:
+        case 18 where bits.value(6, 8) <= 1:           // CF 0: ICAO address; CF 1: anonymous address, same payload
             content = .extendedSquitter(ExtendedSquitter(bits))
         default:
             content = .other

@@ -101,7 +101,9 @@ public struct FISBProduct: Sendable, Equatable {
             day = Int(data[2] & 0x07) << 2 | Int(data[3]) >> 6
             hours = Int(data[3] & 0x3e) >> 1
             minutes = Int(data[3] & 0x01) << 5 | Int(data[4]) >> 3
-            seconds = Int(data[4] & 0x03) << 3 | Int(data[5]) >> 5
+            // Six bits after the minutes: byte 4 bits 2-0, byte 5 bits 7-5. dump978 masks byte 4 with 0x03, losing 32 s
+            // from any time whose seconds are 32 or more.
+            seconds = Int(data[4] & 0x07) << 3 | Int(data[5]) >> 5
         }
         flags = (data[0] & 0x80 != 0, data[0] & 0x40 != 0, data[0] & 0x20 != 0, data[1] & 0x02 != 0)
         productID = Int(data[0] & 0x1f) << 6 | Int(data[1]) >> 2

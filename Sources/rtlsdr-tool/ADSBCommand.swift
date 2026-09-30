@@ -17,19 +17,26 @@ private final class ADSBPrinter: @unchecked Sendable {
 
     /// `time`: seconds since the start (stream position for files, wall clock for live reception).
     func process(_ block: [UInt8], time: Double? = nil) {
-        for frame in demodulator.process(block) {
-            let when = time ?? Double(frame.sampleIndex) / Double(ModeSDemodulator.sampleRate)
-            tracker.update(frame.message, at: when)
-            if raw {
-                print("*\(frame.message.hex);")
-            } else {
-                print(String(format: "%8.3f s %6.1f dBFS  ", when, frame.signalDBFS) + describe(frame.message) + (frame.correctedBit.map { "  (bit \($0) repaired)" } ?? ""))
-            }
-        }
-        let now = time ?? Double(demodulator.framesFound)
-        if !raw, time != nil, now - lastTable >= 10 {
-            lastTable = now
+        for frame in demodulator.process(block) { handle(frame, time: time) }
+        if !raw, let time, time - lastTable >= 10 {
+            lastTable = time
+            tracker.expire(olderThan: 300, now: time)                 // aircraft unheard for 5 minutes leave the table
             printTable()
+        }
+    }
+
+    /// End of a recording: decode what the demodulator still holds back.
+    func finish() {
+        for frame in demodulator.flush() { handle(frame, time: nil) }
+    }
+
+    private func handle(_ frame: ModeSFrame, time: Double?) {
+        let when = time ?? Double(frame.sampleIndex) / Double(ModeSDemodulator.sampleRate)
+        tracker.update(frame.message, at: when)
+        if raw {
+            print("*\(frame.message.hex);")
+        } else {
+            print(String(format: "%8.3f s %6.1f dBFS  ", when, frame.signalDBFS) + describe(frame.message) + (frame.correctedBit.map { "  (bit \($0) repaired)" } ?? ""))
         }
     }
 
@@ -81,7 +88,10 @@ func adsb(_ arguments: Arguments) {
     let raw = arguments.flag("raw")
     var receiver: (latitude: Double, longitude: Double)?
     if arguments.option("lat") != nil || arguments.option("lon") != nil {
-        receiver = (arguments.double("lat", default: 0), arguments.double("lon", default: 0))
+        guard arguments.option("lat") != nil, arguments.option("lon") != nil else { fail("give both --lat and --lon, or neither") }
+        let latitude = arguments.double("lat", default: 0), longitude = arguments.double("lon", default: 0)
+        guard abs(latitude) <= 90, abs(longitude) <= 180 else { fail("--lat must be within ±90 and --lon within ±180 degrees") }
+        receiver = (latitude, longitude)
     }
     let printer = ADSBPrinter(raw: raw, receiver: receiver)
 
@@ -92,6 +102,7 @@ func adsb(_ arguments: Arguments) {
             if chunk.isEmpty { break }
             printer.process([UInt8](chunk))
         }
+        printer.finish()
         if !raw { printer.printTable() }
         return
     }
@@ -103,17 +114,20 @@ func adsb(_ arguments: Arguments) {
         try device.setSampleRate(ModeSDemodulator.sampleRate)
         try device.setCenterFrequency(Int(arguments.double("freq", default: 1_090_000_000)))
         try arguments.applyGain(to: device, default: "49.6")
-        let queue = DispatchQueue(label: "adsb")
+        let backlog = Backlog(label: "adsb")
         let started = monotonicSeconds()
         let failure = FailureBox()
         try device.startStreaming(onError: { failure.set($0) }) { block in
-            let copy = Array(block)
-            queue.async { printer.process(copy, time: monotonicSeconds() - started) }
+            backlog.submit(block) { printer.process($0, time: monotonicSeconds() - started) }
         }
         if !raw { print("listening on 1090 MHz; Ctrl-C to stop") }
-        while monotonicSeconds() - started < seconds, failure.value == nil { Thread.sleep(forTimeInterval: 0.5) }
+        while monotonicSeconds() - started < seconds, failure.value == nil {
+            Thread.sleep(forTimeInterval: 0.5)
+            let dropped = backlog.newlyDropped()
+            if dropped > 0 { FileHandle.standardError.write(Data("warning: decoding fell behind; dropped \(dropped) block(s)\n".utf8)) }
+        }
         device.stopStreaming()
-        queue.sync {}
+        backlog.sync {}
         if let error = failure.value { fail(error.localizedDescription) }
     } catch { fail(error.localizedDescription) }
 }

@@ -63,13 +63,15 @@ public struct NEXRADBlock: Sendable, Equatable {
         }
 
         // Empty blocks: the header's block, and a bitmap of the blocks after it on the same ring (wrapping around it).
+        // A ring always spans 450 block numbers; above 60°N only the even ones exist, so there the bitmap steps over the
+        // ring's 225 wide blocks. (dump978 counts 225 consecutive numbers from 405000 instead, which does not line up
+        // with the rings; the sample data has no blocks that far north, so neither reading has been checked on air.)
         guard data.count >= 4 else { return [] }
         let bitmapBytes = Int(data[3] & 15)
-        let rowSize = blockNumber >= wideBlockThreshold ? 225 : blocksPerRing
-        let rowStart = blockNumber >= wideBlockThreshold
-            ? blockNumber - (blockNumber - wideBlockThreshold) % 225
-            : blockNumber - blockNumber % blocksPerRing
-        let rowOffset = blockNumber - rowStart
+        let step = blockNumber >= wideBlockThreshold ? 2 : 1
+        let rowStart = blockNumber - blockNumber % blocksPerRing
+        let rowSize = blocksPerRing / step
+        let rowOffset = (blockNumber - rowStart) / step
         // An empty CONUS block is "valid data, no precipitation" (1); an empty regional one is below 5 dBZ (0).
         let empty = [UInt8](repeating: kind == .regional ? 0 : 1, count: 128)
         var blocks: [NEXRADBlock] = []
@@ -79,7 +81,7 @@ public struct NEXRADBlock: Sendable, Equatable {
             let bits = i == 0 ? (Int(data[3]) & 0xf0) | 0x08 : Int(data[i + 3])
             for j in 0..<8 where bits & (1 << j) != 0 {
                 let x = (rowOffset + 8 * i + j - 3) % rowSize
-                blocks.append(block(rowStart + x, bins: empty))
+                blocks.append(block(rowStart + x * step, bins: empty))
             }
         }
         return blocks
@@ -93,11 +95,21 @@ public struct NEXRADBlock: Sendable, Equatable {
 }
 
 /// Paints NEXRAD blocks from one product and time into a picture (plate carrée: latitude and longitude linear).
+///
+/// Ground stations repeat their blocks, and several stations can be in range, so a block at a position (and scale)
+/// already held replaces the old one instead of being added again.
 public struct NEXRADComposite: Sendable {
     public let product: NEXRADBlock.Product
     public let hours: Int
     public let minutes: Int
-    public private(set) var blocks: [NEXRADBlock] = []
+    private struct Position: Hashable { var scale: Int, north: Int, west: Int }
+    private var byPosition: [Position: NEXRADBlock] = [:]
+
+    /// The blocks held, one per position, in a stable order.
+    public var blocks: [NEXRADBlock] {
+        byPosition.values.sorted { ($0.scaleFactor, -$0.northArcminutes, $0.westArcminutes) < ($1.scaleFactor, -$1.northArcminutes, $1.westArcminutes) }
+    }
+    public var blockCount: Int { byPosition.count }
 
     public init(product: NEXRADBlock.Product, hours: Int, minutes: Int) {
         self.product = product
@@ -109,12 +121,13 @@ public struct NEXRADComposite: Sendable {
     @discardableResult
     public mutating func add(_ block: NEXRADBlock) -> Bool {
         guard block.product == product, block.hours == hours, block.minutes == minutes else { return false }
-        blocks.append(block)
+        byPosition[Position(scale: block.scaleFactor, north: block.northArcminutes, west: block.westArcminutes)] = block
         return true
     }
 
     /// The area covered, in arcminutes: north, south, west, east (west/east in the -180...180° convention).
     public var bounds: (north: Int, south: Int, west: Int, east: Int)? {
+        let blocks = Array(byPosition.values)
         guard !blocks.isEmpty else { return nil }
         let west = blocks.map { signedWest($0) }.min()!
         let east = blocks.map { signedWest($0) + $0.widthArcminutes }.max()!
@@ -136,6 +149,7 @@ public struct NEXRADComposite: Sendable {
     /// 0 below 60°). Coarser blocks are painted first, finer ones over them; uncovered pixels are black.
     public func image() -> RGBImage? {
         guard let bounds else { return nil }
+        let blocks = self.blocks
         let finest = blocks.map(\.scaleFactor).min()!
         let factor = finest == 1 ? 5 : finest == 2 ? 9 : 1
         // 1.5' × 1' per pixel at scale 0: a block is 32 × 4 pixels (64 × 4 for the wide blocks above 60°).
