@@ -6,13 +6,13 @@ nothing (not even RTLSDRKit): feed it u8 I/Q from the dongle, from a file, or fr
 published messages and recordings made with other receivers. The on-air checks are listed in
 [HARDWARE.md](../HARDWARE.md).
 
-| | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT | Radiosondes | Meshtastic (LoRa) | ACARS |
-|---|---|---|---|---|---|---|---|
-| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) | 400-406 MHz, 240 kS/s (any rate from 48 kS/s), or FM audio | The slot Meshtastic picks for the preset and channel (US LongFast: 906.875 MHz), 1 MS/s (any multiple of the LoRa bandwidth) | 131.550, 131.125 MHz … (US), 131.525, 131.725, 131.825 MHz (Europe): several channels from one capture at 2.4 MS/s (any multiple of 12.5 kHz), or AM audio |
-| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41 weather balloons: position, altitude, velocity, temperature, serial, battery, burst-kill countdown | Meshtastic mesh traffic on the default channel and any channel whose key is given: text messages, positions, node info, telemetry, traceroutes, neighbour lists, acknowledgements; any LoRa frame with an explicit header | Airline operations messages between aircraft and ground: positions, out/off/on/in times, weather requests, free text; registration, flight number, label, message number |
-| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame format as rs1729's RS project documents it (GPL-3.0, read for format facts only); its rs41mod as oracle | Written for this package: LoRa coding from the format as gr-lora_sdr implements it, Meshtastic from its firmware and protobuf definitions (all GPL-3.0, read for format facts only); gr-lora_sdr as oracle | Written for this package: the frame format and the demodulator's method as acarsdec documents and implements them (LGPL-2.0, read, not copied); acarsdec as oracle |
-| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--symbol-rate 72000\|80000] [--web PORT]` | `rtlsdr-tool sonde [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` | `rtlsdr-tool mesh [--preset LongFast] [--region US] [--channel NAME:KEY] [--ifile FILE] [--json]`; `rtlsdr-tool lora --ifile FILE` for plain LoRa | `rtlsdr-tool acars [--region us\|eu \| --freq MHZ,...] [--ifile FILE [--center HZ] \| --wav FILE] [--json]` |
-| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod `--json` (the JSON lines radiosonde_auto_rx reads) | One line, or one JSON object, a packet; field names follow Meshtastic's protobufs | acarsdec `-o 4` (its JSON fields, same values) |
+| | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT | Radiosondes | Meshtastic (LoRa) | ACARS | VDL Mode 2 |
+|---|---|---|---|---|---|---|---|---|
+| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) | 400-406 MHz, 240 kS/s (any rate from 48 kS/s), or FM audio | The slot Meshtastic picks for the preset and channel (US LongFast: 906.875 MHz), 1 MS/s (any multiple of the LoRa bandwidth) | 131.550, 131.125 MHz … (US), 131.525, 131.725, 131.825 MHz (Europe): several channels from one capture at 2.4 MS/s (any multiple of 12.5 kHz), or AM audio | 136.975 MHz (everywhere) and the regional ones (136.725 … 136.875 in Europe, 136.650 … 136.800 in the US), several from one capture at 1.05 MS/s (any multiple of 42 kHz) |
+| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41 weather balloons: position, altitude, velocity, temperature, serial, battery, burst-kill countdown | Meshtastic mesh traffic on the default channel and any channel whose key is given: text messages, positions, node info, telemetry, traceroutes, neighbour lists, acknowledgements; any LoRa frame with an explicit header | Airline operations messages between aircraft and ground: positions, out/off/on/in times, weather requests, free text; registration, flight number, label, message number | The digital successor of ACARS: AVLC frames between aircraft and ground stations, carrying ACARS, ground stations' announcements (GSIF), aircraft logging on with their position and destination, and ATN traffic (CPDLC, ADS-C) |
+| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame format as rs1729's RS project documents it (GPL-3.0, read for format facts only); its rs41mod as oracle | Written for this package: LoRa coding from the format as gr-lora_sdr implements it, Meshtastic from its firmware and protobuf definitions (all GPL-3.0, read for format facts only); gr-lora_sdr as oracle | Written for this package: the frame format and the demodulator's method as acarsdec documents and implements them (LGPL-2.0, read, not copied); acarsdec as oracle | Written for this package from the format as dumpvdl2 implements it (GPL-3.0, read for format facts only); dumpvdl2 as oracle |
+| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--symbol-rate 72000\|80000] [--web PORT]` | `rtlsdr-tool sonde [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` | `rtlsdr-tool mesh [--preset LongFast] [--region US] [--channel NAME:KEY] [--ifile FILE] [--json]`; `rtlsdr-tool lora --ifile FILE` for plain LoRa | `rtlsdr-tool acars [--region us\|eu \| --freq MHZ,...] [--ifile FILE [--center HZ] \| --wav FILE] [--json]` | `rtlsdr-tool vdl2 [--region eu\|us \| --freq MHZ,...] [--ifile FILE [--center HZ]] [--json] [--raw]` |
+| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod `--json` (the JSON lines radiosonde_auto_rx reads) | One line, or one JSON object, a packet; field names follow Meshtastic's protobufs | acarsdec `-o 4` (its JSON fields, same values) | dumpvdl2's JSON (`vdl2`/`avlc` objects, the fields this decoder knows), or its raw frames |
 
 ## How they were checked
 
@@ -401,19 +401,91 @@ How it was checked:
 * **Not done:** reassembling multi-block messages (each block is printed, with "(more)" when another follows),
   decoding the labels' contents (ARINC 620 message formats, such as positions in H1 or Q0 reports), and VDL Mode 2.
 
+### VDL Mode 2
+
+VDL Mode 2 sends bursts of D8PSK at 10 500 symbols/s (31.5 kbit/s) on 25 kHz channels, the pulses shaped by a raised
+cosine (α 0.6) in the transmitter only, as ETSI EN 301 841-1 has it. A burst is five ramp-up symbols, a 16-symbol
+synchronisation sequence, a header (three reserved bits, the length in bits, five check bits of a (25, 20) code), then
+the data in Reed-Solomon (255, 249) blocks over GF(256), the last block's check octets cut to 0, 2 or 4 when it is
+short, interleaved by column; everything after the synchronisation is scrambled (x^15 + x + 1). The data are AVLC
+frames: HDLC (flags, bit stuffing, the X.25 FCS) with 4-octet addresses. The format follows dumpvdl2 by Tomasz Lemiech
+(GPL-3.0, read for these facts only); the Reed-Solomon code is UAT's, already in this package. The receiver is new:
+
+* **Channels** (`VDL2Receiver`). Each channel has its own oscillator, a second-order CIC and a windowed-sinc low-pass to
+  42 kS/s (four samples a symbol), flat to ±13 kHz so that a carrier several kilohertz off still passes whole.
+* **Finding bursts** (`VDL2Demodulator`). Each sample times the conjugate of the sample a symbol earlier keeps the phase
+  steps and turns the carrier offset into a constant angle, so the correlation of those products with the sequence's
+  steps finds a burst and measures its offset at once, for offsets up to half the symbol rate. It is normalised by its
+  largest possible value for products of that energy, so a window that a few strong samples dominate (a burst's ramp)
+  does not score; the noise floor follows the quietest stretches. Every candidate starts its own decoder, so a false
+  start does not hide a real burst behind it.
+* **Demodulation.** Each burst is moved by its offset and filtered by (raised cosine α 0.35) / (raised cosine α 0.6):
+  the result is α 0.35 pulses, still free of intersymbol interference, with 0.3 dB less signal-to-noise than a matched
+  filter could give (a flat filter wide enough for the pulses loses 1.3 dB; a filter matched to the raised cosine
+  leaves interference at −13 dB, too much for eight phases). The synchronisation symbols' known phases set the carrier
+  phase and the remaining frequency error; a decision-directed loop then follows the carrier, a Gardner detector the
+  timing (cubic interpolation between samples), and the symbols are the phase steps between decisions, so a slip of
+  the loop costs one symbol rather than the rest of the burst.
+* **Soft decisions.** Each decision's distance from the boundary (π/8 less the phase error) says how sure it is. The
+  header is repaired by the cheapest pattern of one or two bits that fits; a Reed-Solomon block the code cannot repair
+  as received is tried again with its least reliable octets erased (erasures cost half what errors do), keeping two
+  syndromes in hand so that a wrong repair stays unlikely; if a frame still fails its FCS, a second pass uses the code
+  to its limit and is taken only if every frame's FCS then holds. Frames are read from every bit of the data octets,
+  so a length wrong in its lowest bits (which the header code cannot see) costs nothing.
+* **Frames** (`AVLCFrame`, `VDL2XID`). Addresses (aircraft, ground station, all stations), the A/G and C/R bits,
+  information, supervisory and unnumbered frames; ACARS in information frames (FF FF 01 and the ACARS block with its
+  own CRC, parsed by the ACARS decoder above); XID frames named as ICAO 9776 tabulates them (GSIF, link establishment,
+  handoff, …) with the aircraft's position and altitude, destination airport, airport coverage, nearest airport,
+  frequencies and alternate ground stations decoded. Output is a line a frame, dumpvdl2's JSON, or raw frames.
+
+How it was checked:
+
+* **Synthetic I/Q.** `Tools/vdl2-oracle.py` builds bursts from the format alone: random ACARS uplinks and downlinks, a
+  ground station's GSIF, an aircraft's link establishment with its position, receive-ready frames, one to three a
+  burst; dumpvdl2 decodes all of its clean output, every field as built. `Tools/vdl2-oracle-compare.py` gives both
+  decoders the same u8 file at 1.05 MS/s (three channels, 60 bursts) at each Eb/N0; a frame counts when every octet,
+  FCS included, is one that was sent:
+
+  | Eb/N0 | 20 dB | 16 | 14 | 13 | 12 | 11 | 10 | 9 |
+  |---|---|---|---|---|---|---|---|---|
+  | this receiver | 121 | 121 | 121 | 120 | 114 | 97 | 40 | 8 |
+  | dumpvdl2 2.7.0 | 121 | 120 | 46 | 10 | 3 | 1 | 0 | 0 |
+
+  | carrier offset, transmitter clock | +1 kHz, 0 | 0, +50 ppm | +3 kHz, +50 ppm | −5 kHz, −50 ppm |
+  |---|---|---|---|---|
+  | this receiver at 20 / 14 dB | 121 / 120 | 121 / 120 | 121 / 121 | 121 / 115 (12 dB) |
+  | dumpvdl2 at 20 / 14 dB | 119 / 37 | 121 / 53 | 2 / 1 | 0 / 0 (12 dB) |
+
+  Neither printed a frame that was not sent. dumpvdl2's filter (two poles at 8 kHz) and its differential detection
+  sampled once a symbol are what it loses on: this receiver gets the same share of frames 3.5 to 4 dB lower, and a
+  dongle's crystal error of a few
+  kilohertz at 137 MHz costs it nothing (dumpvdl2 needs `--correction` for that).
+* **dumpvdl2's own test recording** (`test/vdl2_model_16b_1050kHz.wav`, GPL-3.0, not included; converted to u8): both
+  frames decode, octet for octet as dumpvdl2 prints them, although its pulses are narrower than the raised cosine.
+* **Unit tests**: the header code (every single bit repaired, two with reliabilities, the length limits), the
+  scrambler's period, the block layout rules, bursts built from frames and decoded back for six sizes up to three
+  blocks, Reed-Solomon repairs with and without erasures (and that four errors are beyond the code alone), erasure
+  and error decoding against the code's limits; AVLC addresses (against an address from dumpvdl2's recording), ACARS
+  in an information frame, a GSIF, a link establishment with position, supervisory and unnumbered frames; the
+  demodulator on bursts from a modulator written in the test (2.5 kHz off, the clock 40 ppm fast, about 14 dB,
+  odd-sized blocks); two channels from one capture; noise alone.
+* **Not done:** the ATN stack (X.25, CLNP, IDRP, CPDLC and ADS-C, which dumpvdl2 decodes; their frames are shown as
+  bytes), reassembling ACARS messages sent in several blocks, a database of ground stations and aircraft, and VDL
+  Mode 2's own MAC timing (only reception is needed).
+
 ## Speed
 
 Decoding the oracle recordings on one core of the Linux build machine: ADS-B 2.4 s of signal in 0.29 s (release build)
 or 4.5 s (debug build); UAT 1.17 s of signal in 0.04 s (release) or 0.84 s (debug); ISM 122 s of signal in 0.74 s
 (release; rtl_433 takes 0.44 s); Meteor-M LRPT 36 s of I/Q in 1.8 s (the 80k mode 48 s in 3.2 s) (release, to images; meteor_demod's
-demodulation alone takes 0.74 s) or 35 s of soft symbols in 0.5 s; RS41 120 s of I/Q at 240 kS/s in 1.2 s, or of FM audio in 0.4 s. LoRa LongFast 7 s of I/Q at 1 MS/s in 0.85 s (8× real time; SF7 9×). ACARS five channels from 6.4 s of I/Q at 2.4 MS/s in 1.0 s (6× real time). Live, a decoder
+demodulation alone takes 0.74 s) or 35 s of soft symbols in 0.5 s; RS41 120 s of I/Q at 240 kS/s in 1.2 s, or of FM audio in 0.4 s. LoRa LongFast 7 s of I/Q at 1 MS/s in 0.85 s (8× real time; SF7 9×). ACARS five channels from 6.4 s of I/Q at 2.4 MS/s in 1.0 s (6× real time); VDL Mode 2 four channels from 4.1 s at 1.05 MS/s in 0.6 s (7×; dumpvdl2 0.22 s of CPU over its threads). Live, a decoder
 that falls behind
 drops whole blocks and reports it rather than queueing without limit, so use a release build for ADS-B.
 
 ## Rerunning the comparisons
 
 The oracles need dump1090-mutability, dump978, rtl_433, meteor_demod, SatDump, rs41mod, GNU Radio 3.10 with gr-lora_sdr,
-acarsdec and a few Python packages; none of
+acarsdec, dumpvdl2 and a few Python packages; none of
 that is needed for `swift test`.
 
 ```
@@ -456,4 +528,9 @@ Tools/lora-oracle.py tx mesh.txt mesh --ppm 20 --snr -12 && rtlsdr-tool mesh --i
 git clone https://github.com/TLeconte/acarsdec && cmake -S acarsdec -B acarsdec/build -Drtl=ON && make -C acarsdec/build   # 339f63e; librtlsdr, libsndfile
 rtlsdr-tool acars --wav acarsdec/test.wav --json; acarsdec/build/acarsdec -o 4 -f acarsdec/test.wav
 Tools/acars-oracle-compare.py rtlsdr-tool acarsdec/build/acarsdec /tmp/acars --audio-snr=8,6,5,4,3,2 --snr=15,12,10,9,8,7   # numpy
+
+git clone https://github.com/szpajder/libacars && git clone https://github.com/szpajder/dumpvdl2   # 9af09a0, 686e87f
+(cd libacars && cmake -B build && make -C build install) && (cd dumpvdl2 && cmake -B build && make -C build)   # glib 2
+Tools/vdl2-oracle-compare.py rtlsdr-tool dumpvdl2/build/src/dumpvdl2 /tmp/vdl2 --ebn0=20,16,14,13,12,11,10,9   # numpy
+Tools/vdl2-oracle-compare.py rtlsdr-tool dumpvdl2/build/src/dumpvdl2 /tmp/vdl2 --ebn0=20,14,12 --offset 3000 --ppm 50
 ```
