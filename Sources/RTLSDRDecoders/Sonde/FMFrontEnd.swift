@@ -12,7 +12,19 @@ import Foundation
 /// crystal alone can be 20 kHz off at 403 MHz), so the decimated samples' spectrum is also averaged over half a second
 /// and, while no frame has decoded for a while, the listening frequency is moved to the centre of the power standing
 /// above the noise. A receiver that decodes frames keeps the listening frequency on the signal by calling `listen(at:)`.
+///
+/// A discriminator loses ground quickly once the noise in the channel is comparable to the signal. For 2-FSK, the front
+/// end can also give a tone statistic: the filtered samples are correlated over a window (a symbol long) with each of
+/// the two tones, and the statistic is the difference of the two magnitudes. That is the non-coherent matched-filter
+/// detector, which has no such threshold.
 public final class FMFrontEnd {
+    /// The two tones of a 2-FSK signal to detect: `offsetHz` either side of the carrier, over `window` samples.
+    public struct ToneDetector: Sendable {
+        public var offsetHz: Double
+        public var window: Int
+        public init(offsetHz: Double, window: Int) { self.offsetHz = offsetHz; self.window = max(1, window) }
+    }
+
     public let inputRate: Double
     /// Samples a second of `process(iq:)`'s output.
     public let audioRate: Double
@@ -33,6 +45,14 @@ public final class FMFrontEnd {
     private var searchPower = [Double](repeating: 0, count: searchSize)
     private var searchFilled = 0, searchTransforms = 0
     private var samplesSinceGoodFrame = Int.max / 2
+    // Tone detector: for each tone, a rotating reference, the last `window` mixed samples and their running sum.
+    private let tone: ToneDetector?
+    private var toneReference = [(Double, Double)](repeating: (1, 0), count: 2)
+    private var toneRotation = [(Double, Double)](repeating: (1, 0), count: 2)
+    private var toneRing: [[(Double, Double)]] = []
+    private var toneSum = [(Double, Double)](repeating: (0, 0), count: 2)
+    private var toneIndex = 0
+    private var toneSamples = 0
     /// The last carrier search: offset from where the receiver was listening (hertz) and how far the signal stood
     /// above the noise (dB); nil until the first half second.
     public private(set) var lastSearch: (offsetHz: Double, snrDB: Double)?
@@ -41,7 +61,7 @@ public final class FMFrontEnd {
     /// cutoff (the signal's deviation plus its keying rate, about); `searchSpanHz` is how far from the strongest line
     /// the signal's power is counted when the carrier is centred (the half width of its spectrum, about).
     public init(sampleRate: Double, offsetHz: Double = 0, channelCutoffHz: Double, targetAudioRate: Double = 48_000,
-                searchSpanHz: Double = 7_000) {
+                searchSpanHz: Double = 7_000, tones: ToneDetector? = nil) {
         inputRate = sampleRate
         self.offsetHz = offsetHz
         decimation = max(1, Int((sampleRate / targetAudioRate).rounded()))
@@ -56,6 +76,19 @@ public final class FMFrontEnd {
         }
         historyI = [Double](repeating: 0, count: count)
         historyQ = [Double](repeating: 0, count: count)
+        tone = tones
+        if let tones {
+            toneRing = [[(Double, Double)]](repeating: [(Double, Double)](repeating: (0, 0), count: tones.window), count: 2)
+            for (index, sign) in [-1.0, 1.0].enumerated() {
+                let step = -2 * Double.pi * sign * tones.offsetHz / audioRate
+                toneRotation[index] = (cos(step), sin(step))
+            }
+        }
+    }
+
+    /// The output rate for an input rate and a target (the input over a whole decimation).
+    public static func audioRate(sampleRate: Double, targetAudioRate: Double) -> Double {
+        sampleRate / Double(max(1, Int((sampleRate / targetAudioRate).rounded())))
     }
 
     /// Where the receiver is listening, relative to the tuned frequency.
@@ -70,9 +103,16 @@ public final class FMFrontEnd {
     public func noteGoodFrame() { samplesSinceGoodFrame = 0 }
 
     /// The frequency of the signal in hertz, one value per `decimation` input samples.
-    public func process(iq block: [UInt8]) -> [Float] {
+    public func process(iq block: [UInt8]) -> [Float] { processBlock(iq: block).frequency }
+
+    /// The frequency of the signal in hertz and, if the front end was made with a tone detector, its statistic (about
+    /// the symbol energy of the higher tone minus the lower's, positive when the signal is at the higher one), one of
+    /// each per `decimation` input samples.
+    public func processBlock(iq block: [UInt8]) -> (frequency: [Float], tones: [Float]) {
         var audio: [Float] = []
+        var statistic: [Float] = []
         audio.reserveCapacity(block.count / 2 / decimation + 1)
+        if tone != nil { statistic.reserveCapacity(block.count / 2 / decimation + 1) }
         let step = -2 * Double.pi * offsetHz / inputRate
         let rotation = (cos(step), sin(step))
         var index = 0
@@ -105,8 +145,34 @@ public final class FMFrontEnd {
             let angle = atan2(fq * previous.0 - fi * previous.1, fi * previous.0 + fq * previous.1)
             previous = (fi, fq)
             audio.append(Float(angle * audioRate / (2 * .pi)))
+            if let tone { statistic.append(toneStatistic(fi, fq, tone)) }
         }
-        return audio
+        return (audio, statistic)
+    }
+
+    /// One sample into the tone detector: mix with each tone's reference, slide the window, compare magnitudes.
+    private func toneStatistic(_ i: Double, _ q: Double, _ tone: ToneDetector) -> Float {
+        var low = 0.0, high = 0.0
+        for t in 0..<2 {
+            let (c, s) = toneReference[t]
+            let mixed = (i * c - q * s, i * s + q * c)
+            let old = toneRing[t][toneIndex]
+            toneRing[t][toneIndex] = mixed
+            toneSum[t] = (toneSum[t].0 + mixed.0 - old.0, toneSum[t].1 + mixed.1 - old.1)
+            toneReference[t] = (c * toneRotation[t].0 - s * toneRotation[t].1, c * toneRotation[t].1 + s * toneRotation[t].0)
+            let magnitude = (toneSum[t].0 * toneSum[t].0 + toneSum[t].1 * toneSum[t].1).squareRoot()
+            if t == 0 { low = magnitude } else { high = magnitude }
+        }
+        toneIndex = (toneIndex + 1) % tone.window
+        toneSamples += 1
+        if toneSamples == 4096 {                        // keep the references on the unit circle
+            toneSamples = 0
+            for t in 0..<2 {
+                let norm = (toneReference[t].0 * toneReference[t].0 + toneReference[t].1 * toneReference[t].1).squareRoot()
+                toneReference[t] = (toneReference[t].0 / norm, toneReference[t].1 / norm)
+            }
+        }
+        return Float((high - low) / Double(tone.window))
     }
 
     /// Adds a decimated sample to the carrier search; every half second, moves the listening frequency to the signal if
