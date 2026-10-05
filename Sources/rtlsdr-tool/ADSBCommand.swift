@@ -112,6 +112,7 @@ func adsb(_ arguments: Arguments) {
         let device = try arguments.openDevice()
         defer { device.close() }
         try device.setSampleRate(ModeSDemodulator.sampleRate)
+        try arguments.applyFrequencyCorrection(to: device)
         try device.setCenterFrequency(Int(arguments.double("freq", default: 1_090_000_000)))
         try arguments.applyGain(to: device, default: "49.6")
         let backlog = Backlog(label: "adsb")

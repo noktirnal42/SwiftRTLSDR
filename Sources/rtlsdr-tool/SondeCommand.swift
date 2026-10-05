@@ -126,6 +126,7 @@ private func scanForSondes(_ arguments: Arguments, json: Bool, verbose: Bool) {
         let device = try arguments.openDevice()
         defer { device.close() }
         try device.setSampleRate(arguments.int("rate", default: 2_400_000))
+        try arguments.applyFrequencyCorrection(to: device)
         try arguments.applyGain(to: device, default: "40.2")      // fixed, so that the hops of a sweep compare
         var configuration = BandScanner.Configuration(range: from...to)
         configuration.detector.thresholdDB = arguments.double("threshold", default: 8)
@@ -194,6 +195,7 @@ func sonde(_ arguments: Arguments) {
         let device = try arguments.openDevice()
         defer { device.close() }
         _ = try device.setSampleRate(Int(rate))
+        try arguments.applyFrequencyCorrection(to: device)
         try device.setCenterFrequency(frequency - 40_000)
         try arguments.applyGain(to: device, default: "auto")
         let backlog = Backlog(label: "sonde-input")

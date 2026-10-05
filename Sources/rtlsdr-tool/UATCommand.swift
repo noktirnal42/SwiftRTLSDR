@@ -135,6 +135,7 @@ func uat(_ arguments: Arguments) {
         let device = try arguments.openDevice()
         defer { device.close() }
         try device.setSampleRate(UAT.sampleRate)
+        try arguments.applyFrequencyCorrection(to: device)
         try device.setCenterFrequency(Int(arguments.double("freq", default: Double(UAT.frequency))))
         try arguments.applyGain(to: device, default: "49.6")
         let backlog = Backlog(label: "uat")

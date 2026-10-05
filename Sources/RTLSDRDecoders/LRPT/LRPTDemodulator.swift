@@ -45,7 +45,8 @@ public final class LRPTDemodulator {
     private var sweepDirection: Float = 1
     public private(set) var locked = false
     private var search: LRPTCarrierSearch?
-    private var coarse: LRPTCarrierSearch.Estimate?
+    private var coarse: LRPTCarrierSearch.Estimate?, previousCoarse: LRPTCarrierSearch.Estimate?
+    private var unusableEstimates = 0
     private var seeded = false                      // started from a coarse estimate: no sweeping
     private static let tanhTable: [Float] = (0..<32).map { Float(tanh(Double($0 - 16))) }
     // Symbol clock
@@ -245,14 +246,26 @@ public final class LRPTDemodulator {
 
     /// Acts on a coarse estimate: a clear line that is not a tone starts the loop there while it is searching, and
     /// moves it when it claims a lock well away from the line (the lock detector can be fooled by noise, before the
-    /// satellite rises for instance, and would then never look again).
+    /// satellite rises for instance, and would then never look again). A weaker line counts when the estimate before
+    /// agreed with it (noise puts its strongest bin anywhere in the range; a weak signal keeps it in one place), and a
+    /// line too weak to count leaves the loop alone: sweeping away from a weak signal would lose it for good.
     private func steer(_ estimate: LRPTCarrierSearch.Estimate) {
         coarse = estimate
-        guard estimate.strengthDB >= 9 && !estimate.isTone else { seeded = false; return }
+        let agrees = previousCoarse.map { abs($0.hz - estimate.hz) < 60 && !$0.isTone } ?? false
+        previousCoarse = estimate
+        guard !estimate.isTone, estimate.strengthDB >= 9 || (agrees && estimate.strengthDB >= 5) else {
+            // Nothing usable for a long while (about 5 s): whatever seeded the loop is gone, so let it sweep again.
+            unusableEstimates += 1
+            if unusableEstimates >= 12 { seeded = false; unusableEstimates = 0 }
+            return
+        }
+        unusableEstimates = 0
         if locked {
             guard estimate.strengthDB >= 12 && abs(estimate.hz - carrierHz) > 150 else { return }
             locked = false
             pllError = 1000
+        } else if seeded && abs(estimate.hz - carrierHz) < 30 {
+            return                                      // the loop is there already
         }
         pllFrequency = max(-frequencyLimit, min(frequencyLimit, loopFrequency(hz: estimate.hz)))
         seeded = true

@@ -76,6 +76,22 @@ struct Arguments {
         }
     }
 
+    /// `--ppm N` (whole ppm), or `--ppm eeprom` for the calibration stored on the dongle by `calibrate --write`.
+    func applyFrequencyCorrection(to device: RTLSDRDevice) throws {
+        guard let text = option("ppm") else { return }
+        if text == "eeprom" {
+            guard let record = try device.readCalibration() else {
+                fail("--ppm eeprom: this dongle has no calibration stored (measure one with rtlsdr-tool calibrate)")
+            }
+            let ppm = Int(record.ppm.rounded())
+            try device.setFrequencyCorrection(ppm: ppm)
+            FileHandle.standardError.write(Data(String(format: "frequency correction %d ppm, from the dongle's EEPROM (measured %.3f ppm)\n", ppm, record.ppm).utf8))
+        } else {
+            guard let ppm = Int(text) else { fail("--ppm is a whole number of ppm, or eeprom") }
+            try device.setFrequencyCorrection(ppm: ppm)
+        }
+    }
+
     /// `--fast` turns every retune shortcut on.
     func applyRetuneShortcuts(to device: RTLSDRDevice) throws {
         if flag("fast") { try device.setRetuneShortcuts(.all) }

@@ -144,7 +144,7 @@ func mesh(_ arguments: Arguments) {
         let device = try arguments.openDevice()
         defer { device.close() }
         _ = try device.setSampleRate(Int(rate))
-        try device.setFrequencyCorrection(ppm: arguments.int("ppm", default: 0))
+        try arguments.applyFrequencyCorrection(to: device)
         try device.setCenterFrequency(Int((frequency - offset).rounded()))
         try arguments.applyGain(to: device, default: "auto")
         let backlog = Backlog(label: "mesh-input")

@@ -11,6 +11,8 @@ private final class MeteorSession: @unchecked Sendable {
     let mode: LRPT.Mode
     let decoder: LRPTDecoder
     let demodulator: LRPTDemodulator?
+    /// For the 80 ksym/s mode.
+    let deinterleaver: LRPTDeinterleaver?
     let sampleRate: Double
     let symbolRate: Double
     let frequency: Int
@@ -23,8 +25,8 @@ private final class MeteorSession: @unchecked Sendable {
     private var caduFile: FileHandle?
     private var softFile: FileHandle?
 
-    init(mode: LRPT.Mode, sampleRate: Double, symbolRate: Double, frequency: Int, iq: Bool, source: String, cadu: String?,
-         writeSoft: String?) {
+    init(mode: LRPT.Mode, sampleRate: Double, symbolRate: Double, interleaved: Bool, frequency: Int, iq: Bool, source: String,
+         cadu: String?, writeSoft: String?) {
         self.mode = mode
         self.sampleRate = sampleRate
         self.symbolRate = symbolRate
@@ -32,6 +34,7 @@ private final class MeteorSession: @unchecked Sendable {
         self.source = source
         decoder = LRPTDecoder(mode: mode)
         demodulator = iq ? LRPTDemodulator(sampleRate: sampleRate, symbolRate: symbolRate, offset: mode.isOffset) : nil
+        deinterleaver = interleaved ? LRPTDeinterleaver() : nil
         if let cadu {
             _ = FileManager.default.createFile(atPath: cadu, contents: nil)
             caduFile = FileHandle(forWritingAtPath: cadu)
@@ -66,14 +69,20 @@ private final class MeteorSession: @unchecked Sendable {
         levelDBFS = 10 * log10(max(sum / Double(max(1, block.count / 2)), 1e-9) / (127.5 * 127.5))
         let soft = demodulator.process(block)
         softFile?.write(Data(soft.map { UInt8(bitPattern: $0) }))
-        decoder.process(soft: soft)
+        decoder.process(soft: deinterleaver?.process(soft) ?? soft)
         streamSeconds += Double(block.count / 2) / sampleRate
     }
 
     /// Call on `queue`.
     func feedSoft(_ soft: [Int8]) {
-        decoder.process(soft: soft)
+        decoder.process(soft: deinterleaver?.process(soft) ?? soft)
         streamSeconds += Double(soft.count / 2) / symbolRate
+    }
+
+    /// "OQPSK 72k NRZ-M" and the like.
+    var modeName: String {
+        (mode == .qpsk ? "QPSK " : "OQPSK ") + "\(Int(symbolRate / 1000))k" + (mode.isDifferential ? " NRZ-M" : "")
+            + (deinterleaver != nil ? " interleaved" : "")
     }
 
     /// The dashboard's telemetry, as JSON. Call on `queue`.
@@ -88,7 +97,7 @@ private final class MeteorSession: @unchecked Sendable {
         let apids = Set(imager.channels.keys)
         var object: [String: Any] = [
             "t": streamSeconds, "frequency": frequency, "sampleRate": sampleRate, "source": source,
-            "mode": (mode == .qpsk ? "QPSK " : "OQPSK ") + "\(Int(symbolRate / 1000))k" + (mode.isDifferential ? " NRZ-M" : ""),
+            "mode": modeName,
             "nominalRate": symbolRate,
             "carrier": status?.carrierOffsetHz ?? 0, "locked": status?.locked ?? true, "snr": status?.snrDB ?? 0,
             "gain": Double(status?.gain ?? 0), "symbolRate": status?.symbolRate ?? symbolRate, "level": levelDBFS,
@@ -107,6 +116,10 @@ private final class MeteorSession: @unchecked Sendable {
             object["composite"] = ["name": "RGB " + bands.joined(), "apids": [red, green, blue].map { $0 ?? 0 }]
         }
         if let hz = status?.coarseCarrierHz, let db = status?.coarseStrengthDB { object["coarse"] = ["hz": hz, "db": db] }
+        if let deinterleaver {
+            object["interleaver"] = ["synced": deinterleaver.isSynchronised, "markers": deinterleaver.markerScore,
+                                     "resyncs": deinterleaver.resynchronisations]
+        }
         if let spacecraft = statistics.spacecraft.max(by: { $0.value < $1.value })?.key { object["spacecraft"] = spacecraft }
         if !spectrumDB.isEmpty { object["spectrum"] = ["bins": spectrumDB, "span": sampleRate] }
         ribbon.removeAll()
@@ -132,6 +145,7 @@ private final class MeteorSession: @unchecked Sendable {
     }
 
     func finish(directory: String) {
+        if let deinterleaver { decoder.process(soft: deinterleaver.flush()) }     // the last ~18 s it still holds
         decoder.flush()
         finishMeteor(decoder, directory: directory)
     }
@@ -186,14 +200,18 @@ func meteor(_ arguments: Arguments) {
     let output = arguments.option("out") ?? "meteor"
     let frequency = arguments.int("freq", default: 137_900_000)
     let rate = arguments.double("rate", default: 288_000)
-    // 72 ksym/s. (Meteor-M N2-3 and N2-4 sometimes send 80 ksym/s, interleaved, which is not decoded yet.)
-    let symbolRate = Double(LRPT.symbolRate)
+    // 72 ksym/s, or the 80 ksym/s interleaved mode Meteor-M N2-3 and N2-4 sometimes use.
+    let symbolRate = arguments.double("symbol-rate", default: Double(LRPT.symbolRate))
+    guard symbolRate == 72_000 || symbolRate == 80_000 else { fail("--symbol-rate is 72000 or 80000 (interleaved)") }
+    let interleaved = symbolRate == 80_000
+    if interleaved && mode == .qpsk { fail("the 80k interleaved mode is OQPSK (--mode oqpsk)") }
     guard rate >= 2 * symbolRate else { fail("--rate must be at least twice the symbol rate (\(Int(2 * symbolRate)))") }
     let softPath = arguments.option("soft")
     let iqPath = arguments.option("ifile")
     let source = softPath != nil ? "soft symbols" : iqPath != nil ? "recording" : "live"
-    let session = MeteorSession(mode: mode, sampleRate: rate, symbolRate: symbolRate, frequency: frequency, iq: softPath == nil,
-                                source: source, cadu: arguments.option("cadu"), writeSoft: arguments.option("write-soft"))
+    let session = MeteorSession(mode: mode, sampleRate: rate, symbolRate: symbolRate, interleaved: interleaved, frequency: frequency,
+                                iq: softPath == nil, source: source, cadu: arguments.option("cadu"),
+                                writeSoft: arguments.option("write-soft"))
 
     var dashboard: MeteorDashboard?
     if let port = arguments.option("web") {
@@ -240,6 +258,7 @@ func meteor(_ arguments: Arguments) {
         let device = try arguments.openDevice()
         defer { device.close() }
         _ = try device.setSampleRate(Int(rate))
+        try arguments.applyFrequencyCorrection(to: device)
         try device.setCenterFrequency(frequency)
         try arguments.applyGain(to: device, default: "40.2")
         let backlog = Backlog(label: "meteor-input")
@@ -247,7 +266,7 @@ func meteor(_ arguments: Arguments) {
         try device.startStreaming(onError: { failure.set($0) }) { block in
             backlog.submit(block) { copy in session.queue.sync { session.feedIQ(copy) } }
         }
-        print("listening on \(megahertz(Double(frequency))) at \(Int(rate)) S/s (\(mode == .qpsk ? "QPSK" : "OQPSK, NRZ-M"), \(Int(symbolRate)) sym/s); Ctrl-C to stop")
+        print("listening on \(megahertz(Double(frequency))) at \(Int(rate)) S/s (\(session.modeName)); Ctrl-C to stop")
         let started = monotonicSeconds()
         var lastReport = started
         while monotonicSeconds() - started < seconds, failure.value == nil {
@@ -272,6 +291,9 @@ private func reportProgress(_ session: MeteorSession, _ seconds: Double) {
     if let status = session.demodulator?.status {
         line += String(format: "carrier %+6.0f Hz ", status.carrierOffsetHz) + (status.locked ? "locked   " : "searching")
         line += String(format: "  SNR %4.1f dB  ", status.snrDB)
+    }
+    if let deinterleaver = session.deinterleaver {
+        line += deinterleaver.isSynchronised ? String(format: "markers %.2f  ", deinterleaver.markerScore) : "no markers  "
     }
     line += "frames \(statistics.validFrames)/\(statistics.frames)  lines \(session.decoder.imager.commonHeight)"
     print(line)

@@ -15,6 +15,7 @@ func serve(_ arguments: Arguments) -> Never {
     do {
         let device = try arguments.openDevice()
         try device.setSampleRate(rate)
+        try arguments.applyFrequencyCorrection(to: device)
         try device.setCenterFrequency(frequency)
         try arguments.applyGain(to: device)
         try arguments.applyRetuneShortcuts(to: device)

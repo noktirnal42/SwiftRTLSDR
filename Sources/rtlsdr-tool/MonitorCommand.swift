@@ -18,6 +18,7 @@ func monitor(_ arguments: Arguments) {
         let device = try arguments.openDevice()
         defer { device.close() }
         try device.setSampleRate(arguments.int("rate", default: 2_048_000))
+        try arguments.applyFrequencyCorrection(to: device)
         try device.setCenterFrequency(Int(arguments.double("freq", default: 0)))
 
         var control: HostGainControl?

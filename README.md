@@ -87,6 +87,31 @@ Generic dongles all report serial `00000001`, so `openFirst(serial:)` cannot tel
 and verifies it by reading back; it returns the old contents as a backup. Replug the dongle afterwards. Untested on
 hardware: try it first on a dongle you can afford to lose.
 
+### Calibration kept on the dongle
+
+`CarrierCalibrator` (in `RTLSDRScan`) measures the crystal's error on a carrier of known frequency: long transforms,
+the line placed to a fraction of a bin, p = f/(c + m) − 1 since the tuner and the sample clock share the crystal. A
+signal generator or a GPS-disciplined beacon will do, a US television station's ATSC pilot (`--atsc CHANNEL`) to a
+couple of ppm (stations may sit up to about a kilohertz off the nominal pilot: measure two); a modulated signal will
+not. `rtlsdr-tool calibrate` reports the ppm and with `--write` keeps it in the EEPROM's unused
+second half (offsets 0x80-0xff) as a small checksummed record (`CalibrationRecord`: ppb, when, against what, a label),
+written only where the area is unused or already holds such a record, after a backup. Every command that tunes then
+takes `--ppm eeprom`. Untested on hardware, like the serial: try it first on a dongle you can afford to lose.
+
+```swift
+let record = try device.readCalibration()                   // nil if none
+try device.setFrequencyCorrection(ppm: Int(record!.ppm.rounded()))
+```
+
+### The hydrogen line
+
+`SwitchedSpectrometer` integrates power spectra in two tunings, on the 21 cm line and off it (frequency switching),
+and their ratio divides out the dongle's bandpass, leaving the line; `LSRCorrection` turns velocities into ones about
+the local standard of rest (agreeing with astropy to 0.3 km/s), from RA/Dec or from where the antenna points.
+`rtlsdr-tool hline` runs it for as long as asked and writes a CSV (frequency, radio velocity, LSR velocity, both
+spectra, the ratio). It needs a dish or horn and a low-noise amplifier at 1420 MHz; the bare dongle does not see the
+line.
+
 ### Network server (`RTLSDRServer`)
 
 `RTLTCPServer` serves the dongle with the `rtl_tcp` protocol that SDR#, GQRX, SDR++ and others speak. It handles one
@@ -101,7 +126,8 @@ stations, thermometers, remotes: AcuRite, Oregon Scientific, LaCrosse, Fine Offs
 Meteor-M weather-satellite images on 137 MHz (LRPT, QPSK and offset QPSK), with a live dashboard in the browser; and
 Vaisala RS41 radiosondes on 400-406 MHz (position, altitude, velocity, temperature), found by scanning or on a given
 frequency; and Meshtastic mesh traffic on LoRa (text messages, positions, node info, telemetry; the default channel and
-any channel whose key you have), on the frequency Meshtastic picks for the preset and region. `rtlsdr-tool adsb`, `uat`,
+any channel whose key you have), on the frequency Meshtastic picks for the preset and region. Meteor-M also in its
+80 ksym/s interleaved mode. `rtlsdr-tool adsb`, `uat`,
 `ism`, `meteor`, `sonde` and `mesh` run them live or on recorded I/Q, with output compatible with dump1090, dump978,
 rtl_433, meteor_decode and rs41mod. How they were checked, and against what: [docs/DECODERS.md](docs/DECODERS.md).
 
@@ -155,6 +181,9 @@ swift run -c release rtlsdr-tool ism --json                           # 433.92 M
 swift run -c release rtlsdr-tool meteor --web 8080 --out pass/        # Meteor-M images, live at localhost:8080
 swift run -c release rtlsdr-tool sonde --scan --json                  # radiosondes on 400-406 MHz
 swift run -c release rtlsdr-tool mesh --region EU_868                 # Meshtastic LongFast on 869.525 MHz
+swift run rtlsdr-tool calibrate --atsc 27 --write --label roof        # measure the crystal on a TV pilot, keep it
+swift run -c release rtlsdr-tool adsb --ppm eeprom                    # any tuning command: apply the stored ppm
+swift run -c release rtlsdr-tool hline --seconds 1800 --lat 52 --lon 4.6 --az 180 --el 60   # 21 cm line, CSV out
 ```
 
 Use a release build for the decoders: a debug build decodes ADS-B at about half real speed (it then drops blocks and
@@ -200,7 +229,7 @@ antenna, the bias tee on a dongle that has one, any other dongle model or tuner 
 other than 27, hot-plug, and using several dongles at once. Retuning takes about 27 ms, which limits scan speed.
 
 Also not verified on hardware: everything added on 2026-09-30 (retune shortcuts, overload guard / host AGC, scanning,
-EEPROM writing and serial provisioning, the `rtl_tcp` server, the ADS-B, UAT, ISM, Meteor-M, RS41 and Meshtastic decoders). It was built and tested on
+EEPROM writing and serial provisioning, the `rtl_tcp` server, the ADS-B, UAT, ISM, Meteor-M, RS41 and Meshtastic decoders, calibration and the hydrogen-line spectrometer). It was built and tested on
 Linux only; the macOS build of those parts has not been compiled yet.
 
 ## Requirements

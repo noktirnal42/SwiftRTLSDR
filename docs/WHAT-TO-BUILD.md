@@ -26,7 +26,8 @@ needs a hardware change or a different dongle. `[unknown]` I found no public inf
   * `[buildable, untested]` **Store per-dongle calibration on the dongle** (measured ppm, a TCXO offset, a label
     like "roof antenna") in the never-written area, so the calibration travels with the hardware. Risk: a bad write to
     the header bytes can change the USB IDs and make the dongle unrecognisable, so only the free area may be written,
-    read-back-verified, and it should be tried on a sacrificial dongle first. I have not tried it.
+    read-back-verified, and it should be tried on a sacrificial dongle first. I have not tried it. (Done since, untested
+    on hardware: `CalibrationRecord` and `rtlsdr-tool calibrate --write`; see the status below.)
   * **Warning:** the RTL-SDR Blog driver forces the bias tee on when the IR-endpoint flag is set
     ([its source](https://github.com/rtlsdrblog/rtl-sdr-blog/blob/master/src/librtlsdr.c), "Hack to force the Bias T"). The
     tested generic dongle has that flag set, so copying the hack would drive GPIO 0 on dongles that have no bias tee.
@@ -54,6 +55,8 @@ The RTL2832U exposes GPIO pins through the system registers (this driver impleme
   tuner's PLL, matching `rtl_sdr`'s register output.
 * `[buildable]` **Automatic calibration from carriers you already receive** (a strong known broadcast or pilot tone instead of GSM,
   which is being phased out in some countries): estimate the offset, apply it, remember it (see the EEPROM idea above).
+  (Done since for a carrier you name, such as a signal generator or an ATSC pilot: `rtlsdr-tool calibrate`, then
+  `--ppm eeprom`. Recognising a reference in whatever is received is not.)
 * `[exists, needs mod]` **Shared clock across several dongles** is what makes coherent arrays (KrakenSDR, KerberosSDR) possible.
   Several ordinary dongles on separate crystals are not coherent.
 
@@ -90,7 +93,7 @@ These are specific to what the measurements in this repo showed.
 | Weather satellites | SatDump: Meteor-M LRPT (~137.9 MHz), NOAA HRPT, GOES etc.; automation of passes ([RTL-SDR.com](https://www.rtl-sdr.com/automating-noaa-apt-and-meteor-m2-lrpt-reception-with-satdump-1-1-2/)). The source says APT was not supported in SatDump at that version | `[exists]` Meteor-M LRPT (72k, QPSK and offset QPSK) ported into `RTLSDRDecoders` from meteor_demod/meteor_decode, checked against them and SatDump, with a live dashboard (see [DECODERS.md](DECODERS.md)). GOES/HRPT need more bandwidth and a dish than a whip antenna |
 | Radiosondes (weather balloons) | `radiosonde_auto_rx`: scans for peaks, decodes, uploads to SondeHub ([RTL-SDR.com](https://www.rtl-sdr.com/tracking-radiosondes-with-an-rtl-sdr-and-radiosonde_auto_rx/)) | `[exists]` A scan-then-decode loop is exactly a scanner's job. The Vaisala RS41 is decoded in `RTLSDRDecoders` (checked field for field against rs1729's rs41mod), with `rtlsdr-tool sonde --scan` on the scan loop (see [DECODERS.md](DECODERS.md)) |
 | LoRa / Meshtastic | RTL-SDR can decode most Meshtastic presets at once; a US-wide capture of all presets needs 20 MHz ([RTL-SDR.com](https://www.rtl-sdr.com/decoding-meshtastic-in-realtime-with-an-rtl-sdr-and-gnu-radio/), [related](https://github.com/alphafox02/meshtastic-sniffer)) | `[exists]` Receive only. Decoded in `RTLSDRDecoders` (LoRa PHY checked against gr-lora_sdr, Meshtastic packets with the default and given channel keys), one preset and slot at a time: `rtlsdr-tool mesh` (see [DECODERS.md](DECODERS.md)) |
-| Radio astronomy (21 cm hydrogen line, 1420.4058 MHz) | A WiFi dish + LNA + RTL-SDR drift scan shows the line and its Doppler shift ([RTL-SDR.com](https://www.rtl-sdr.com/cheap-and-easy-hydrogen-line-radio-astronomy-with-a-rtl-sdr-wifi-parabolic-grid-dish-lna-and-sdrsharp/)) | `[exists]` Needs an LNA and a dish; the bare dongle is not enough |
+| Radio astronomy (21 cm hydrogen line, 1420.4058 MHz) | A WiFi dish + LNA + RTL-SDR drift scan shows the line and its Doppler shift ([RTL-SDR.com](https://www.rtl-sdr.com/cheap-and-easy-hydrogen-line-radio-astronomy-with-a-rtl-sdr-wifi-parabolic-grid-dish-lna-and-sdrsharp/)) | `[exists]` Needs an LNA and a dish; the bare dongle is not enough. The software side is here: a frequency-switched long-integration spectrometer with LSR velocities, `rtlsdr-tool hline` (CSV out) |
 | Direction finding, passive radar | KrakenSDR/KerberosSDR (coherent, shared clock); passive radar uses FM/DAB/DVB-T broadcasts as illuminators ([RTL-SDR.com](https://www.rtl-sdr.com/measuring-traffic-in-a-neighborhood-with-kerberossdr-and-passive-radar/)) | `[needs mod]` Impossible with one ordinary dongle |
 
 Also commonly done but **not researched here**: pagers (POCSAG/FLEX), AIS ships, DAB+, GNSS.
@@ -124,12 +127,14 @@ lists the check to run for each.
    Rubicson, Ambient Weather, EV1527 remotes); Meteor-M LRPT weather-satellite images (137 MHz), ported from
    meteor_demod and meteor_decode with a faster carrier acquisition, and a browser dashboard (`rtlsdr-tool meteor
    --web`); Vaisala RS41 radiosondes (400-406 MHz), with a scan mode on the scan loop (`rtlsdr-tool sonde --scan`);
-   Meshtastic over LoRa (`rtlsdr-tool mesh`), with a LoRa receiver of its own (`rtlsdr-tool lora`). All
+   Meshtastic over LoRa (`rtlsdr-tool mesh`), with a LoRa receiver of its own (`rtlsdr-tool lora`); Meteor's 80k
+   interleaved mode (`--symbol-rate 80000`). All
    are checked against oracles ([DECODERS.md](DECODERS.md)); none has received a live signal. Not started:
-   ACARS/VDL2, other radiosonde types (DFM, M10/M20, RS92, iMet), several Meshtastic presets at once, Meteor's 80k interleaved mode, NOAA APT (the NOAA satellites have
+   ACARS/VDL2, other radiosonde types (DFM, M10/M20, RS92, iMet), several Meshtastic presets at once, NOAA APT (the NOAA satellites have
    been retired). The fixed-frequency decoders do not need the scan loop; `SignalDecoder` is still the slot for decoders
    that do.
 4. **Unique-serial provisioning:** `RTLSDRDevice.setSerialNumber` and `rtlsdr-tool set-serial` (dry run by default, backup
-   first, never writes the header, verified by read-back). Calibration storage in the free area 0x80-0xff is possible
-   with `writeEEPROM`, but no record format has been defined yet.
+   first, never writes the header, verified by read-back). A calibration record in the free area 0x80-0xff
+   (`CalibrationRecord`: ppb, when, against what, a label, checksummed; written only where the area is unused or holds
+   one), measured on a known carrier by `rtlsdr-tool calibrate` and applied with `--ppm eeprom`.
 5. **Network server:** the `RTLSDRServer` library (`rtl_tcp` protocol, `rtlsdr-tool serve`).

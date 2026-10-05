@@ -4,13 +4,17 @@
 
 usage: lrpt-oracle.py CADUS OUT.u8 [--mode oqpsk|qpsk] [--rate 288000] [--esn0 12] [--offset 1500]
                       [--doppler 3000] [--clock-ppm 30] [--alpha 0.6] [--seed 1] [--repeat 1] [--symbol-rate 72000]
+                      [--interleave]
 
 CADUS: 1024-byte frames, marker included, derandomised and corrected (SatDump writes such a file, `*.cadu`). Each is
 randomised (the CCSDS sequence), for `--mode oqpsk` (Meteor-M N2-3, N2-4) NRZ-M coded, convolutionally encoded
 (K=7, G1 0x79, G2 0x5B, G2 sent first), mapped to QPSK (1 -> -1, even channel bits on I) and shaped with a
 root-raised-cosine pulse; OQPSK delays Q by half a symbol. The carrier drifts linearly by --doppler Hz over the
 recording around --offset Hz, the symbol clock is off by --clock-ppm, and complex Gaussian noise gives the Es/N0 asked
-for. Needs numpy.
+for. --interleave makes the 80 ksym/s mode Meteor-M N2-3 and N2-4 also use: the channel bits go through a convolutional
+interleaver of 36 branches, branch b delaying its bits by b x 2048 x 36 (bit n is on branch n mod 36), and every 72
+interleaved bits are preceded by the 8-bit marker 0x27; the bits the interleaver holds at either end are random. The
+symbol rate is then 80000 unless given. Needs numpy.
 """
 import argparse
 import numpy as np
@@ -43,6 +47,24 @@ def channel_bits(cadus, differential):
     out = np.empty(2 * len(bits), dtype=np.uint8)
     out[0::2], out[1::2] = g2, g1
     return out
+
+
+MARKER = np.unpackbits(np.array([0x27], dtype=np.uint8))
+BRANCHES, BRANCH_DELAY = 36, 2048
+
+
+def interleave(bits, rng):
+    """Convolutional interleaving with markers: out[n] = bits[n - (n % 36) * 2048 * 36], 72 bits a marker."""
+    step = BRANCH_DELAY * BRANCHES
+    total = len(bits) + (BRANCHES - 1) * step
+    total += -total % 72
+    n = np.arange(total)
+    source = n - (n % BRANCHES) * step
+    out = rng.integers(0, 2, total).astype(np.uint8)            # what the interleaver holds before and after the data
+    inside = (source >= 0) & (source < len(bits))
+    out[inside] = bits[source[inside]]
+    blocks = out.reshape(-1, 72)
+    return np.concatenate([np.tile(MARKER, (len(blocks), 1)), blocks], axis=1).reshape(-1)
 
 
 def rrc(t, alpha):
@@ -87,13 +109,18 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--lead", type=float, default=0.3, help="seconds of noise before and after")
-    parser.add_argument("--symbol-rate", type=float, default=72000, help="(the 80k mode's interleaving is not modelled)")
+    parser.add_argument("--symbol-rate", type=float, default=None, help="72000, or 80000 with --interleave")
+    parser.add_argument("--interleave", action="store_true", help="the 80k mode: interleaver and markers")
     args = parser.parse_args()
+    if args.symbol_rate is None:
+        args.symbol_rate = 80000 if args.interleave else 72000
 
     rng = np.random.default_rng(args.seed)
     cadus = np.fromfile(args.cadus, dtype=np.uint8)
     cadus = np.tile(cadus, args.repeat)
     bits = channel_bits(cadus, args.mode == "oqpsk")
+    if args.interleave:
+        bits = interleave(bits, rng)
     values = 1.0 - 2.0 * bits
     i_symbols, q_symbols = values[0::2], values[1::2]
     lead = int(args.lead * args.rate)
@@ -118,8 +145,9 @@ def main():
     iq = np.empty(2 * count)
     iq[0::2], iq[1::2] = received.real * scale + 127.5, received.imag * scale + 127.5
     np.clip(np.round(iq), 0, 255).astype(np.uint8).tofile(args.output)
-    print(f"{args.output}: {count} samples ({count / args.rate:.1f} s), {len(cadus) // 1024} frames, {args.mode}, "
-          f"Es/N0 {args.esn0} dB, carrier {args.offset}±{args.doppler / 2} Hz")
+    print(f"{args.output}: {count} samples ({count / args.rate:.1f} s), {len(cadus) // 1024} frames, {args.mode}"
+          f"{' interleaved' if args.interleave else ''} at {symbol_rate:.0f} sym/s, Es/N0 {args.esn0} dB, "
+          f"carrier {args.offset}±{args.doppler / 2} Hz")
 
 
 if __name__ == "__main__":

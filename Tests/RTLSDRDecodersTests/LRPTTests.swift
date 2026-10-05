@@ -316,3 +316,125 @@ struct MSUMRTests {
         #expect(worstDeviation < 2, "block deviations off by up to \(worstDeviation) beyond a quarter")
     }
 }
+
+struct LRPTDeinterleaverTests {
+    /// The 80k mode's interleaver, written from its description: soft sample n of the channel stream goes out at
+    /// n + (n mod 36) × 36 × `delay` (branch n mod 36 delays it that much), random samples fill what the branches hold
+    /// before and after, and every 72 samples follow the marker 0x27 (as soft samples, 1 negative).
+    static func interleave(_ soft: [Int8], delay: Int, generator: inout Seeded) -> [Int8] {
+        let step = 36 * delay
+        var total = soft.count + 35 * step
+        total += (72 - total % 72) % 72
+        let marker: [Int8] = [100, 100, -100, 100, 100, -100, -100, -100]
+        var out: [Int8] = []
+        out.reserveCapacity(total / 72 * 80)
+        for n in 0..<total {
+            if n % 72 == 0 { out += marker }
+            let source = n - (n % 36) * step
+            out.append(source >= 0 && source < soft.count ? soft[source] : Int8.random(in: -100...100, using: &generator))
+        }
+        return out
+    }
+
+    /// Feeds `stream` in uneven pieces, then flushes.
+    static func deinterleave(_ stream: [Int8], _ deinterleaver: LRPTDeinterleaver) -> [Int8] {
+        var output: [Int8] = []
+        var index = 0, piece = 1_001
+        while index < stream.count {
+            let end = min(stream.count, index + piece)
+            output += deinterleaver.process(Array(stream[index..<end]))
+            index = end
+            piece = piece * 7 % 9_973 + 500
+        }
+        return output + deinterleaver.flush()
+    }
+
+    /// Where `original` sits in `output` (acquisition starts at a marker the deinterleaver chooses), and how much of
+    /// `original[range]` matches there.
+    static func agreement(_ output: [Int8], _ original: [Int8], range: Range<Int>) -> Double {
+        let probe = Array(original[(range.lowerBound + 1_000)..<(range.lowerBound + 1_400)])
+        var bestShift = 0, bestCount = -1
+        for shift in stride(from: 0, through: output.count - range.upperBound, by: 1) {
+            var count = 0
+            for k in 0..<probe.count where output[shift + range.lowerBound + 1_000 + k] == probe[k] { count += 1 }
+            if count > bestCount { bestCount = count; bestShift = shift }
+            if count == probe.count { break }
+        }
+        let matches = range.filter { output[bestShift + $0] == original[$0] }.count
+        return Double(matches) / Double(range.count)
+    }
+
+    private static let delay = 4                       // latency 35 × 144 samples instead of 35 × 73 728
+
+    @Test func samplesComeOutInOrderInEveryRotation() {
+        for t in 0..<8 {
+            var generator = Seeded(state: UInt64(100 + t))
+            let original = LRPTTestSignal.randomSoft(72 * 600, generator: &generator)
+            var stream = Self.interleave(original, delay: Self.delay, generator: &generator)
+            var k = 0
+            while k + 1 < stream.count {                // the demodulator settled in transform t
+                let (x, y) = LRPTDeinterleaver.apply(t, Int(max(-127, stream[k])), Int(max(-127, stream[k + 1])))
+                stream[k] = Int8(x); stream[k + 1] = Int8(y)
+                k += 2
+            }
+            let lead = LRPTTestSignal.randomSoft(t % 2 == 0 ? 1_001 : 1_000, generator: &generator)
+            let output = Self.deinterleave(lead + stream, LRPTDeinterleaver(branchDelay: Self.delay))
+            #expect(Self.agreement(output, original.map { max(-127, $0) }, range: 0..<original.count) == 1, "transform \(t)")
+        }
+    }
+
+    /// A carrier loop slipping by half a turn looks, at the marker, almost like a quarter turn and one sample (7 of 8
+    /// samples agree); an offset-QPSK quarter turn really does move the pairs a sample. Both must be followed, and a
+    /// symbol dropped or doubled by the clock too: past each event the output is exact again.
+    @Test func phaseJumpsAndSymbolSlipsAreFollowed() {
+        var generator = Seeded(state: 7)
+        let original = LRPTTestSignal.randomSoft(72 * 2_000, generator: &generator).map { max(-127, $0) }
+        let stream = Self.interleave(original, delay: Self.delay, generator: &generator)
+        func turned(_ part: ArraySlice<Int8>, _ t: Int) -> [Int8] {
+            var out = Array(part)
+            var k = 0
+            while k + 1 < out.count {
+                let (x, y) = LRPTDeinterleaver.apply(t, Int(out[k]), Int(out[k + 1]))
+                out[k] = Int8(x); out[k + 1] = Int8(y)
+                k += 2
+            }
+            return out
+        }
+        let a = 30_000, b = 60_000, c = 90_000, d = 120_000
+        var received = Array(stream[..<a])
+        received += turned(stream[a..<b], 2)                               // half a turn
+        received += turned([0] + stream[b..<c], 4)                          // OQPSK quarter turn: a sample on, mirrored
+        received += turned(stream[(c + 2)..<d], 4)                          // a symbol lost
+        received += turned(stream[d..<(d + 2)] + stream[d...], 4)           // a symbol doubled
+        let deinterleaver = LRPTDeinterleaver(branchDelay: Self.delay)
+        let output = Self.deinterleave(received, deinterleaver)
+        // The last stretch, past the reach of the last event (its data index plus the latency and two windows), is
+        // exact.
+        let tail = (original.count - 18_000)..<(original.count - 1_000)
+        #expect(Self.agreement(output, original, range: tail) == 1)
+        #expect(deinterleaver.resynchronisations >= 4)
+    }
+
+    @Test func framesThroughInterleaverDeinterleaverAndDecoder() {
+        // Six noisy frames; the demodulator settled a quarter turn off (offset QPSK: a sample on, mirrored). The
+        // satellites' 2048 cells a branch (18 s) are checked against SatDump with real frames (DECODERS.md); 16 keep
+        // this test fast.
+        var generator = Seeded(state: 3)
+        let cadus = LRPTTestSignal.frames(count: 6, generator: &generator)
+        let soft = LRPTTestSignal.soft(LRPTTestSignal.channelBits(cadus, mode: .oqpskNRZM), generator: &generator)
+        let stream = Self.interleave(soft, delay: 16, generator: &generator)
+        let mirrored = LRPTTestSignal.transform([0] + stream, rotation: 2, mirrored: true)
+        let deinterleaver = LRPTDeinterleaver(branchDelay: 16)
+        let decoder = LRPTDecoder(mode: .oqpskNRZM)
+        var index = 0
+        while index < mirrored.count {
+            let end = min(mirrored.count, index + 65_536)
+            decoder.process(soft: deinterleaver.process(Array(mirrored[index..<end])))
+            index = end
+        }
+        decoder.process(soft: deinterleaver.flush())
+        decoder.flush()
+        #expect(decoder.statistics.validFrames == 6)
+        #expect(LRPTDeinterleaver().latency == 2_580_480)
+    }
+}

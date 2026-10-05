@@ -21,6 +21,8 @@ public enum LRPT {
     /// over the 264 offsets and phases tried there (about one window in 70, which matters only when the signal has
     /// just gone).
     static let markerThreshold = 48
+    /// A marker this good is not chance: a frame's worth of random bits peaks around 47-49 somewhere in its eight phases.
+    static let confidentMarker = 54
     /// Soft symbols either side of the expected marker searched first: an offset-QPSK carrier slip moves the marker
     /// by one, a symbol-clock slip by two.
     static let markerReach = 16
@@ -274,7 +276,21 @@ public final class LRPTFrameDecoder {
         let from = max(0, start - LRPT.markerReach)
         guard soft.count - from >= length else { return nil }
         let hard = soft.withUnsafeBufferPointer { SoftBits.hard($0, from: from, count: length) }
-        let (offset, phase, score) = correlator.correlate(hard, expected: synced ? start - from : nil, reach: LRPT.markerReach)
+        var (offset, phase, score) = correlator.correlate(hard, expected: synced ? start - from : nil, reach: LRPT.markerReach)
+        if score < LRPT.confidentMarker && soft.count - from >= 2 * length {
+            // A weak best may be chance, with the real marker just past this window (before a pass, after a fade,
+            // behind the 80k mode's interleaver): a frame taken there would swallow the real one. Look a window
+            // further, and move to what is found there if it is clearly a marker and not simply the next frame after
+            // the weak one (which a weak but real marker always has).
+            // The first window has been searched; the next one starts a marker's length before its end.
+            let overlap = 128
+            let next = soft.withUnsafeBufferPointer { SoftBits.hard($0, from: from + length - overlap, count: length + overlap) }
+            var further = correlator.correlate(next, expected: nil, reach: 0)
+            further.offset += length - overlap
+            if further.score >= LRPT.confidentMarker && abs(further.offset - (offset + length)) > LRPT.markerReach {
+                (offset, phase, score) = further
+            }
+        }
         let marker = from + offset
         guard marker + length <= soft.count else { return nil }
         // Derotated in a copy: the next search may look back into these symbols.

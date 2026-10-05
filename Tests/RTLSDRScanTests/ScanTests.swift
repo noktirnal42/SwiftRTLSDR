@@ -287,3 +287,49 @@ struct ScanLoopTests {
         #expect(dwell.tunedHz == 401_400_000 && dwell.signalOffsetHz == 600_000)
     }
 }
+
+struct CarrierCalibratorTests {
+    /// u8 I/Q of a carrier at `carrierHz` as a dongle whose crystal is `ppm` fast sees it when tuned to `tunedHz`.
+    private func capture(carrierHz: Double, tunedHz: Double, ppm: Double, rate: Double, seconds: Double) -> [UInt8] {
+        let offset = carrierHz / (1 + ppm * 1e-6) - tunedHz
+        var state: UInt64 = 7
+        func noise() -> Double {
+            state = state &* 6_364_136_223_846_793_005 &+ 1
+            return Double(state >> 40) / Double(1 << 24) - 0.5
+        }
+        let count = Int(rate * seconds)
+        var bytes = [UInt8](repeating: 0, count: 2 * count)
+        for n in 0..<count {
+            let phase = 2 * Double.pi * offset * Double(n) / rate
+            bytes[2 * n] = UInt8(max(0, min(255, (127.5 + 12 * cos(phase) + 40 * noise()).rounded())))
+            bytes[2 * n + 1] = UInt8(max(0, min(255, (127.5 + 12 * sin(phase) + 40 * noise()).rounded())))
+        }
+        return bytes
+    }
+
+    @Test(arguments: [23.7, -61.25, 0.4])
+    func theCrystalErrorIsMeasured(ppm: Double) throws {
+        let carrier = 162_550_000.0, rate = 1_024_000.0, tuned = carrier - rate / 4
+        let calibrator = try #require(CarrierCalibrator(sampleRate: rate, tunedHz: tuned, carrierHz: carrier, fftSize: 1 << 16))
+        let samples = capture(carrierHz: carrier, tunedHz: tuned, ppm: ppm, rate: rate, seconds: 0.4)
+        stride(from: 0, to: samples.count, by: 100_001).forEach {           // odd pieces, as a stream gives them
+            calibrator.process(iq: Array(samples[$0..<min(samples.count, $0 + 100_001)]))
+        }
+        let m = try #require(calibrator.measurement())
+        #expect(abs(m.ppm - ppm) < 0.02, "measured \(m.ppm)")
+        #expect(m.snrDB > 20 && m.transforms == 6)
+    }
+
+    @Test func noTransformYetGivesNoMeasurement() throws {
+        let calibrator = try #require(CarrierCalibrator(sampleRate: 1_024_000, tunedHz: 100e6, carrierHz: 100.25e6, fftSize: 1 << 12))
+        calibrator.process(iq: [UInt8](repeating: 128, count: 1000))
+        #expect(calibrator.measurement() == nil)
+    }
+
+    @Test func atscPilots() {
+        #expect(CarrierCalibrator.atscPilotHz(channel: 14) == 470_309_440.559)
+        #expect(CarrierCalibrator.atscPilotHz(channel: 7) == 174_309_440.559)
+        #expect(CarrierCalibrator.atscPilotHz(channel: 5) == 76_309_440.559)
+        #expect(CarrierCalibrator.atscPilotHz(channel: 37) == nil)
+    }
+}

@@ -119,6 +119,7 @@ func ism(_ arguments: Arguments) {
         let device = try arguments.openDevice()
         defer { device.close() }
         let actualRate = try device.setSampleRate(rate)
+        try arguments.applyFrequencyCorrection(to: device)
         try device.setCenterFrequency(frequency)
         try arguments.applyGain(to: device, default: "auto")
         // Timings use the nominal rate, as rtl_433 does (the dongle's actual rate differs by a few parts per million).
