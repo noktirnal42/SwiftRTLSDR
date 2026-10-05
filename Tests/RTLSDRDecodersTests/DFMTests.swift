@@ -48,6 +48,12 @@ struct DFMFlight {
     var corruptTime: Set<Int> = []
     /// Frames to lose entirely (their blocks fail), by frame number.
     var lostFrames: Set<Int> = []
+    /// Single packets to lose (their block fails), by place in the stream of packets (nine a second).
+    var lostPackets: Set<Int> = []
+    /// Position mode: 2 (ellipsoid heights), 3 (sea-level heights, a second position) or 4 (extra data).
+    var mode = 2
+    /// Extra data bytes sent in mode 4 (26 of them: two with the height, six in each of packets 4 to 7).
+    var extra: [UInt8] = (0..<26).map { UInt8(0x01 + 3 * $0) }
 
     // EPCOS B57540G0502, R/T table: temperature (C) and R/R25.
     static let table: [(Double, Double)] = [(-55, 51.991), (-50, 37.989), (-45, 28.07), (-40, 20.96), (-35, 15.809), (-30, 12.037),
@@ -111,17 +117,49 @@ struct DFMFlight {
         func u(_ v: Int, _ bits: Int) -> UInt64 { UInt64(bitPattern: Int64(v)) & ((1 << UInt64(bits)) - 1) }
         let prn: UInt64 = 0b1010_0100_0001_0010_0100_0010_0101
         let counter = (gpsSeconds(second: s) - counterOffset) & 0xff
-        return [
-            (0, 0x1234 << 32 | 2 << 24 | UInt64(counter) << 16 | 0x0101),
-            (1, prn << 16 | u(seconds % 60 * 1000, 16)),
-            (2, u(Int((lat * 1e7).rounded()), 32) << 16 | u(808, 16)),
-            (3, u(Int((lon * 1e7).rounded()), 32) << 16 | u(6820, 16)),
-            (4, u(Int((alt * 100).rounded()), 32) << 16 | u(520, 16)),
-            (5, u(4800, 16) << 32 | 0x2345_6789),
-            (6, 0x0123_4567_89ab),
-            (7, 0xba98_7654_3210),
-            (8, u(2025, 12) << 36 | 6 << 32 | 15 << 27 | 10 << 22 | u(minute, 6) << 16 | 9 << 8),
+        // Year (12 bits), month (4), day (5), hour (5), minute (6) and the satellite count (8), from the top of 48 bits.
+        var date: UInt64 = u(2025, 12) << 36
+        date |= UInt64(6) << 32
+        date |= UInt64(15) << 27
+        date |= UInt64(10) << 22
+        date |= u(minute, 6) << 16
+        date |= UInt64(9) << 8
+        let latitude = u(Int((lat * 1e7).rounded()), 32), longitude = u(Int((lon * 1e7).rounded()), 32)
+        let height = u(Int((alt * 100).rounded()), 32)
+        let ms = u(seconds % 60 * 1000, 16)
+        if mode == 2 {
+            return [
+                (0, 0x1234 << 32 | 2 << 24 | UInt64(counter) << 16 | 0x0101),
+                (1, prn << 16 | ms),
+                (2, latitude << 16 | u(808, 16)),
+                (3, longitude << 16 | u(6820, 16)),
+                (4, height << 16 | u(520, 16)),
+                (5, u(4800, 16) << 32 | 0x2345_6789),
+                (6, 0x0123_4567_89ab),
+                (7, 0xba98_7654_3210),
+                (8, date),
+            ]
+        }
+        // Modes 3 and 4: the time and speed lead, then latitude and heading, longitude and climb, height (and the first two
+        // extra bytes); in mode 3 packets 5 to 7 carry a second position, in mode 4 packets 4 to 7 six extra bytes each.
+        func bytes(_ values: ArraySlice<UInt8>) -> UInt64 { values.reduce(UInt64(0)) { $0 << 8 | UInt64($1) } }
+        var out: [(id: Int, payload: UInt64)] = [
+            (0, ms << 32 | UInt64(mode) << 24 | UInt64(counter) << 16 | u(808, 16)),
+            (1, latitude << 16 | u(6820, 16)),
+            (2, longitude << 16 | u(520, 16)),
         ]
+        if mode == 4 {
+            out.append((3, height << 16 | bytes(extra[0..<2])))
+            for k in 0..<4 { out.append((4 + k, bytes(extra[(2 + 6 * k)..<(8 + 6 * k)]))) }
+        } else {
+            out.append((3, height << 16))
+            out.append((4, 0x0102_0304_0506))
+            out.append((5, latitude << 16 | u(111, 16)))
+            out.append((6, longitude << 16 | u(222, 16)))
+            out.append((7, height << 16 | u(333, 16)))
+        }
+        out.append((8, date))
+        return out
     }
 
     /// GPS seconds of second `s` of the flight (2025-06-15 10:20:20 UTC plus s, leap seconds not applied).
@@ -138,6 +176,9 @@ struct DFMFlight {
             let channel = cycle.removeFirst()
             var frame = DFMFrameBuilder.frame(channel: channel.channel, value: channel.value, first: stream[2 * number], second: stream[2 * number + 1])
             if lostFrames.contains(number) { for k in 16..<DFM.frameBits { frame[k] = (k * 7 + number) % 5 < 2 ? -1 : 1 } }
+            for (slot, start) in [(2 * number, 72), (2 * number + 1, 176)] where lostPackets.contains(slot) {
+                for k in start..<(start + 104) { frame[k] = (k * 7 + slot) % 5 < 2 ? -1 : 1 }
+            }
             out.append(frame)
         }
         return out
@@ -262,9 +303,14 @@ struct DFMDecoderTests {
     }
 
     @Test func gpsTimeOfADate() {
-        #expect(DFMDecoder.daysSince1980(year: 1980, month: 1, day: 6) == 0)
-        #expect(DFMDecoder.daysSince1980(year: 2025, month: 6, day: 15) * 86_400 + 10 * 3600 + 20 * 60 == 1_434_018_000)
-        #expect(DFMDecoder.daysSince1980(year: 2024, month: 3, day: 1) - DFMDecoder.daysSince1980(year: 2024, month: 2, day: 28) == 2)
+        for days in stride(from: -400, through: 12_000, by: 37) {
+            let date = GPSTime.date(daysSince1980: days)
+            #expect(GPSTime.daysSince1980(year: date.year, month: date.month, day: date.day) == days, "day \(days)")
+        }
+        #expect(GPSTime.date(daysSince1980: 0) == (1980, 1, 6) && GPSTime.date(daysSince1980: 16_597) == (2025, 6, 15))
+        #expect(GPSTime.daysSince1980(year: 1980, month: 1, day: 6) == 0)
+        #expect(GPSTime.daysSince1980(year: 2025, month: 6, day: 15) * 86_400 + 10 * 3600 + 20 * 60 == 1_434_018_000)
+        #expect(GPSTime.daysSince1980(year: 2024, month: 3, day: 1) - GPSTime.daysSince1980(year: 2024, month: 2, day: 28) == 2)
     }
 
     @Test func fieldsComeOutAsPutIn() throws {
@@ -280,6 +326,29 @@ struct DFMDecoderTests {
         #expect(report.json().hasPrefix("{ \"type\": \"DFM\", \"frame\": 1434018031, \"id\": \"DFM-21071356\", \"datetime\": \"2025-06-15T10:20:31.000Z\", \"lat\": "))
         #expect(report.json().contains("\"subtype\": \"0xA:DFM09\"") && report.json().hasSuffix("\"ref_datetime\": \"UTC\", \"ref_position\": \"GPS\", \"diff_GPS_MSL\": -48.00 }"))
         #expect(all.count >= 11, "one report a second once the packets have come round")
+    }
+
+    /// Modes 3 and 4 lay the packets out differently: time and speed first, heights above sea level; mode 4 also carries
+    /// extra data (an ozonesonde's, say) in 26 bytes.
+    @Test func theOtherPositionModes() throws {
+        for mode in [3, 4] {
+            var flight = DFMFlight()
+            flight.mode = mode
+            let all = reports(flight)
+            let report = try #require(all.last, "mode \(mode)")
+            let expected = flight.position(11)
+            #expect(abs(report.latitude - expected.lat) < 1e-7 && abs(report.longitude - expected.lon) < 1e-7, "mode \(mode)")
+            #expect(abs(report.altitude - expected.alt) < 0.006 && report.horizontalSpeed == 8.08, "mode \(mode)")
+            #expect(report.heading == 68.2 && report.verticalSpeed == 5.2 && report.positionMode == mode && report.geoidHeight == nil, "mode \(mode)")
+            #expect(report.gpsSeconds == 1_434_018_031 && report.json().contains("\"ref_position\": \"MSL\""), "mode \(mode)")
+            #expect(all.count >= 11, "mode \(mode): \(all.count) reports")
+            if mode == 4 {
+                #expect(report.aux == flight.extra, "\(String(describing: report.aux))")
+                #expect(report.json().contains("\"aux\": \"" + flight.extra.map { String(format: "%02X", $0) }.joined() + "\""))
+            } else {
+                #expect(report.aux == nil)
+            }
+        }
     }
 
     @Test func serialModelBatteryAndTemperatureOfEachFamily() throws {
@@ -322,6 +391,21 @@ struct DFMDecoderTests {
         #expect(!all.contains { $0.gpsSeconds == flight.gpsSeconds(second: 6) + 60 })      // not the time the corruption says
         #expect(!all.contains { $0.gpsSeconds == flight.gpsSeconds(second: 6) })
         #expect(all.contains { $0.gpsSeconds == flight.gpsSeconds(second: 7) }, "reports go on after it")
+    }
+
+    /// A packet lost in the middle of a second must not be made up with the same packet from the second before, even
+    /// when the frames' timing puts that one just inside the six frames the packets of a report may span.
+    @Test func aLostPacketIsNotMadeUpWithTheOneFromTheSecondBefore() {
+        var flight = DFMFlight()
+        flight.lostPackets = [3 * 9 + 4]                           // the altitude of the fourth second
+        let decoder = DFMDecoder()
+        var all: [DFMReport] = []
+        for (number, soft) in flight.frames().enumerated() {
+            if let report = decoder.ingest(DFMFrame(soft: soft), frameCount: Double(number) * 0.98) { all.append(report) }
+        }
+        #expect(!all.contains { $0.gpsSeconds == flight.gpsSeconds(second: 3) })
+        #expect(all.count == 11)
+        #expect(all.allSatisfy { abs($0.altitude - flight.position($0.gpsSeconds - 1_434_018_020).alt) < 0.006 })
     }
 
     @Test func aSecondWithAMissingPacketGivesNoReport() {

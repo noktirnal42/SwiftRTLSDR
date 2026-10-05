@@ -162,6 +162,8 @@ public final class RS41Receiver {
     public let decoder: RS41Decoder
     private let sync: RS41FrameSync
     private let front: FMFrontEnd?
+    /// A frame's mean frequency is used to fine-tune the listening frequency only within this many hertz of it.
+    private static let afcLimitHz = 1_500.0
 
     /// I/Q input at `sampleRate`, the sonde `offsetHz` above the tuned frequency.
     public init(sampleRate: Double, offsetHz: Double = 0, channelCutoffHz: Double = 3_700, decoder: RS41Decoder = RS41Decoder()) {
@@ -203,9 +205,11 @@ public final class RS41Receiver {
             let frame = item.frame
             var offset: Double?
             if let front {
-                offset = front.listeningOffsetHz + item.mean
-                // Follow the sonde: listen where the last clear header was.
-                if frame.corrected != nil || item.correlation >= 0.75 { front.listen(at: offset!) }
+                offset = front.listeningOffset(atSample: item.sampleIndex) + item.mean
+                // Follow the sonde: listen where the last clear header was. Only when the carrier is already near: the
+                // mean of a discriminator is biased by a channel filter that clips one of the tones, and a carrier far
+                // off is for the carrier search to bring in.
+                if (frame.corrected != nil || item.correlation >= 0.75) && abs(item.mean) < Self.afcLimitHz { front.listen(at: offset!) }
                 if frame.corrected != nil { front.noteGoodFrame() }
             }
             return RS41Event(frame: frame, report: decoder.report(frame), sampleIndex: item.sampleIndex * Double(front?.decimation ?? 1),

@@ -33,12 +33,10 @@ public final class DFMFrameSync {
         public var mean: Double
     }
 
-    /// What `process` is given: a discriminator's frequency (to be integrated over each symbol), or the front end's tone
-    /// statistic (a symbol's worth already; its place is the sample where it ends).
-    public enum Input: Sendable { case frequency, tones }
+    public typealias Input = SymbolInput
 
     public let sampleRate: Double
-    public let input: Input
+    public let input: SymbolInput
     public var threshold = 0.65
     /// Frames expected to follow the last one are accepted at this correlation.
     public var trackingThreshold = 0.5
@@ -48,80 +46,26 @@ public final class DFMFrameSync {
     public private(set) var rejected = 0
     let samplesPerSymbol: Double
     private let frameSpan: Double
-    private var samples: [Float] = []
-    private var frequencies: [Float] = []           // tones input: the discriminator's frequency, for the carrier offset
-    private var frequencyPrefix: [Double] = [0]
-    private var prefix: [Double] = [0]              // prefix[n] = Σ samples[0 ..< n]
-    private var base = 0                            // stream index of samples[0]
+    private var buffer: SymbolBuffer
     private var searchFrom = 0.0                    // buffer index where the next header search starts
     private var expected: (start: Double, negative: Bool)?     // where the next frame should start
 
-    public init(sampleRate: Double, input: Input = .frequency) {
+    public init(sampleRate: Double, input: SymbolInput = .frequency) {
         self.sampleRate = sampleRate
         self.input = input
         samplesPerSymbol = sampleRate / DFM.symbolRate
         frameSpan = Double(DFM.frameBits * 2) * samplesPerSymbol
-    }
-
-    @inline(__always)
-    private func integral(_ x: Double) -> Double {
-        let whole = Int(x)
-        return prefix[whole] + (x - Double(whole)) * Double(samples[min(whole, samples.count - 1)])
-    }
-
-    @inline(__always)
-    private func symbol(_ start: Double) -> Double {
-        guard input == .tones else { return integral(start + samplesPerSymbol) - integral(start) }
-        // The statistic over the window that ends with the symbol's last sample, between two samples.
-        let x = start + samplesPerSymbol - 1
-        let whole = Int(x), fraction = x - Double(whole)
-        return Double(samples[whole]) * (1 - fraction) + Double(samples[min(whole + 1, samples.count - 1)]) * fraction
-    }
-
-    /// Pearson correlation of the first `count` header symbols with the integrals from `start` on.
-    private func correlation(at start: Double, symbols count: Int = 32) -> Double {
-        let header = DFM.headerSymbols
-        var sum = 0.0, sumSquares = 0.0, cross = 0.0, sumH = 0.0
-        for k in 0..<count {
-            let v = symbol(start + Double(k) * samplesPerSymbol), h = header[k]
-            sum += v; sumSquares += v * v; cross += v * h; sumH += h
-        }
-        let n = Double(count)
-        let spread = sumSquares - sum * sum / n, spreadH = n - sumH * sumH / n
-        guard spread > 0, spreadH > 0 else { return 0 }
-        return (cross - sum * sumH / n) / (spread * spreadH).squareRoot()
-    }
-
-    @inline(__always)
-    private func frequencyIntegral(_ x: Double) -> Double {
-        let whole = Int(x)
-        return frequencyPrefix[whole] + (x - Double(whole)) * Double(frequencies[min(whole, frequencies.count - 1)])
+        buffer = SymbolBuffer(input: input, samplesPerSymbol: samplesPerSymbol)
     }
 
     /// The samples a frame at `start` needs, past its end by one symbol.
     @inline(__always)
-    private func hasFrame(at start: Double) -> Bool { start + frameSpan + samplesPerSymbol < Double(samples.count) }
+    private func hasFrame(at start: Double) -> Bool { start + frameSpan + samplesPerSymbol < Double(buffer.count) }
 
     /// Adds samples: a discriminator's frequency (`.frequency`), or the statistic (`.tones`, which also needs the
     /// frequency, one value for each, for the carrier offset).
     public func process(_ values: [Float], frequency: [Float]? = nil) -> [Found] {
-        samples.reserveCapacity(samples.count + values.count)
-        prefix.reserveCapacity(prefix.count + values.count)
-        var running = prefix[prefix.count - 1]
-        for value in values {
-            samples.append(value)
-            running += Double(value)
-            prefix.append(running)
-        }
-        if input == .tones, let frequency {
-            precondition(frequency.count == values.count)
-            var total = frequencyPrefix[frequencyPrefix.count - 1]
-            for value in frequency {
-                frequencies.append(value)
-                total += Double(value)
-                frequencyPrefix.append(total)
-            }
-        }
+        buffer.append(values, frequency: frequency)
         var found: [Found] = []
         let headerSpan = Double(DFM.headerSymbols.count + 1) * samplesPerSymbol
         search: while true {
@@ -132,7 +76,7 @@ public final class DFMFrameSync {
                 var offset = -samplesPerSymbol / 4
                 while offset <= samplesPerSymbol / 4 {
                     let start = next.start + offset
-                    let r = correlation(at: start)
+                    let r = buffer.correlation(of: DFM.headerSymbols, at: start)
                     if (r < 0) == next.negative && abs(r) >= trackingThreshold && (best == nil || abs(r) > abs(best!.r)) { best = (start, r) }
                     offset += 0.25
                 }
@@ -145,17 +89,17 @@ public final class DFMFrameSync {
                 expected = nil
                 searchFrom = max(searchFrom, next.start - 2 * samplesPerSymbol)
             }
-            while searchFrom + headerSpan + samplesPerSymbol < Double(samples.count) {
+            while searchFrom + headerSpan + samplesPerSymbol < Double(buffer.count) {
                 // The first 12 symbols sort out most places cheaply.
-                guard abs(correlation(at: searchFrom, symbols: 12)) >= 0.5 else { searchFrom += 1; continue }
-                let r = correlation(at: searchFrom)
+                guard abs(buffer.correlation(of: DFM.headerSymbols, at: searchFrom, symbols: 12)) >= 0.5 else { searchFrom += 1; continue }
+                let r = buffer.correlation(of: DFM.headerSymbols, at: searchFrom)
                 guard abs(r) >= threshold else { searchFrom += 1; continue }
                 var best = (start: searchFrom, r: r)
                 var offset = -samplesPerSymbol / 2
                 while offset <= samplesPerSymbol / 2 {
                     let start = searchFrom + offset
-                    if start >= 0 && start + headerSpan + samplesPerSymbol < Double(samples.count) {
-                        let candidate = correlation(at: start)
+                    if start >= 0 && start + headerSpan + samplesPerSymbol < Double(buffer.count) {
+                        let candidate = buffer.correlation(of: DFM.headerSymbols, at: start)
                         if abs(candidate) > abs(best.r) { best = (start, candidate) }
                     }
                     offset += 0.25
@@ -172,7 +116,11 @@ public final class DFMFrameSync {
             }
             break
         }
-        trim()
+        let dropped = buffer.trim(before: min(searchFrom, expected.map { $0.start - 2 * samplesPerSymbol } ?? searchFrom))
+        if dropped > 0 {
+            searchFrom -= Double(dropped)
+            if let next = expected { expected = (next.start - Double(dropped), next.negative) }
+        }
         return found
     }
 
@@ -181,40 +129,15 @@ public final class DFMFrameSync {
         let polarity: Float = r < 0 ? -1 : 1
         var soft = [Float](repeating: 0, count: DFM.frameBits)
         for k in 0..<DFM.frameBits {
-            let first = symbol(start + Double(2 * k) * samplesPerSymbol)
-            let second = symbol(start + Double(2 * k + 1) * samplesPerSymbol)
+            let first = buffer.symbol(start + Double(2 * k) * samplesPerSymbol)
+            let second = buffer.symbol(start + Double(2 * k + 1) * samplesPerSymbol)
             soft[k] = Float(second - first) * polarity
         }
         let frame = DFMFrame(soft: soft, repairTwoBitErrors: repairTwoBitErrors)
         guard frame.intactBlocks >= minimumIntact else { return nil }
-        let mean: Double
-        if input == .tones {
-            mean = (frequencyIntegral(start + frameSpan) - frequencyIntegral(start)) / frameSpan
-        } else {
-            mean = (integral(start + frameSpan) - integral(start)) / frameSpan
-        }
-        return Found(frame: frame, sampleIndex: Double(base) + start, frameCount: (Double(base) + start) / frameSpan,
-                     correlation: abs(r), inverted: r < 0, mean: mean)
-    }
-
-    /// Drops what no search can need again (in large steps, so that shifting the buffers stays cheap).
-    private func trim() {
-        let keep = min(searchFrom, expected.map { $0.start - 2 * samplesPerSymbol } ?? searchFrom)
-        let drop = Int(keep) - 16
-        guard drop > 100_000 else { return }
-        samples.removeFirst(drop)
-        let offset = prefix[drop]
-        prefix.removeFirst(drop)
-        for index in prefix.indices { prefix[index] -= offset }
-        if input == .tones {
-            frequencies.removeFirst(drop)
-            let frequencyOffset = frequencyPrefix[drop]
-            frequencyPrefix.removeFirst(drop)
-            for index in frequencyPrefix.indices { frequencyPrefix[index] -= frequencyOffset }
-        }
-        base += drop
-        searchFrom -= Double(drop)
-        if let next = expected { expected = (next.start - Double(drop), next.negative) }
+        let mean = buffer.meanFrequency(from: start, to: start + frameSpan)
+        let stream = Double(buffer.base) + start
+        return Found(frame: frame, sampleIndex: stream, frameCount: stream / frameSpan, correlation: abs(r), inverted: r < 0, mean: mean)
     }
 }
 
@@ -240,6 +163,7 @@ public final class DFMReceiver {
     public let sync: DFMFrameSync
     private let front: FMFrontEnd?
     private let tones: Bool
+    private static let afcLimitHz = 1_200.0
 
     /// The tones' distance from the carrier, hertz: the signal's deviation. The sondes' is about 2.4 kHz.
     public static let defaultDeviationHz = 2_400.0
@@ -285,9 +209,11 @@ public final class DFMReceiver {
         found.map { item in
             var offset: Double?
             if let front {
-                offset = front.listeningOffsetHz + item.mean
+                offset = front.listeningOffset(atSample: item.sampleIndex) + item.mean
                 // Follow the sonde: listen where the last clear frame was.
-                if item.frame.intactBlocks == 3 && item.correlation >= 0.75 { front.listen(at: offset!) }
+                // (Only when the carrier is already near: a carrier far off is for the carrier search to bring in, since a
+                // clipped tone biases a discriminator's mean.)
+                if item.frame.intactBlocks == 3 && item.correlation >= 0.75 && abs(item.mean) < Self.afcLimitHz { front.listen(at: offset!) }
                 if item.frame.intactBlocks >= 2 { front.noteGoodFrame() }
             }
             return DFMEvent(frame: item.frame, report: decoder.ingest(item.frame, frameCount: item.frameCount),

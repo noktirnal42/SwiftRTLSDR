@@ -124,13 +124,14 @@ ADS-B / Mode S on 1090 MHz; UAT on 978 MHz (US general aviation) including FIS-B
 rendered to PNG, METAR/TAF/winds-aloft text; 433/868/915 MHz sensors the way rtl_433 decodes them (weather
 stations, thermometers, remotes: AcuRite, Oregon Scientific, LaCrosse, Fine Offset/Ecowitt, Bresser and others); and
 Meteor-M weather-satellite images on 137 MHz (LRPT, QPSK and offset QPSK), with a live dashboard in the browser; and
-Vaisala RS41 radiosondes on 400-406 MHz (position, altitude, velocity, temperature), found by scanning or on a given
-frequency; and Meshtastic mesh traffic on LoRa (text messages, positions, node info, telemetry; the default channel and
-any channel whose key you have), on the frequency Meshtastic picks for the preset and region. Meteor-M also in its
+radiosondes on 400-406 MHz (Vaisala RS41, Graw DFM-06/09/17 and Meteomodem M10/M20: position, altitude, velocity,
+temperature, serial number), found by scanning or on a given frequency; and Meshtastic mesh traffic on LoRa (text
+messages, positions, node info, telemetry; the default channel and any channel whose key you have), on the frequency
+Meshtastic picks for the preset and region, or several presets and slots at once from one capture. Meteor-M also in its
 80 ksym/s interleaved mode. ACARS on VHF (airline messages), and VDL Mode 2 (its digital successor: ACARS over AVLC,
 ground station announcements, aircraft logging on with their positions), every channel of a region from one capture.
 `rtlsdr-tool adsb`, `uat`, `ism`, `meteor`, `sonde`, `mesh`, `acars` and `vdl2` run them live or on recorded I/Q, with
-output compatible with dump1090, dump978, rtl_433, meteor_decode, rs41mod, acarsdec and dumpvdl2. How they were checked, and against what: [docs/DECODERS.md](docs/DECODERS.md).
+output compatible with dump1090, dump978, rtl_433, meteor_decode, rs41mod, dfm09mod, m10m20mod, acarsdec and dumpvdl2. How they were checked, and against what: [docs/DECODERS.md](docs/DECODERS.md).
 
 ```swift
 import RTLSDRDecoders
@@ -180,8 +181,10 @@ swift run -c release rtlsdr-tool adsb --lat 37.4 --lon -122.1         # aircraft
 swift run -c release rtlsdr-tool uat --nexrad radar/                  # 978 MHz: aircraft, weather text, radar PNGs
 swift run -c release rtlsdr-tool ism --json                           # 433.92 MHz sensors, rtl_433's JSON
 swift run -c release rtlsdr-tool meteor --web 8080 --out pass/        # Meteor-M images, live at localhost:8080
-swift run -c release rtlsdr-tool sonde --scan --json                  # radiosondes on 400-406 MHz
+swift run -c release rtlsdr-tool sonde --scan --json                  # radiosondes on 400-406 MHz (RS41, DFM, M10/M20)
+swift run -c release rtlsdr-tool sonde --type m10 --freq 404.4e6      # one type on a known frequency (rs41, dfm, m10)
 swift run -c release rtlsdr-tool mesh --region EU_868                 # Meshtastic LongFast on 869.525 MHz
+swift run -c release rtlsdr-tool mesh --region EU_868 --presets LongFast,MediumFast,ShortFast   # three presets at once
 swift run -c release rtlsdr-tool acars --region us                    # ACARS on the five US channels at once
 swift run -c release rtlsdr-tool vdl2 --region eu                     # VDL Mode 2 on four European channels
 swift run rtlsdr-tool calibrate --atsc 27 --write --label roof        # measure the crystal on a TV pilot, keep it
@@ -232,7 +235,7 @@ antenna, the bias tee on a dongle that has one, any other dongle model or tuner 
 other than 27, hot-plug, and using several dongles at once. Retuning takes about 27 ms, which limits scan speed.
 
 Also not verified on hardware: everything added on 2026-09-30 (retune shortcuts, overload guard / host AGC, scanning,
-EEPROM writing and serial provisioning, the `rtl_tcp` server, the ADS-B, UAT, ISM, Meteor-M, RS41, Meshtastic, ACARS and VDL Mode 2 decoders, calibration and the hydrogen-line spectrometer). It was built and tested on
+EEPROM writing and serial provisioning, the `rtl_tcp` server, the ADS-B, UAT, ISM, Meteor-M, RS41, DFM, M10/M20, Meshtastic (several presets at once), ACARS and VDL Mode 2 decoders, calibration and the hydrogen-line spectrometer). It was built and tested on
 Linux only; the macOS build of those parts has not been compiled yet.
 
 ## Requirements

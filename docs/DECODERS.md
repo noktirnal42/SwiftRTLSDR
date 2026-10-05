@@ -8,11 +8,11 @@ published messages and recordings made with other receivers. The on-air checks a
 
 | | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT | Radiosondes | Meshtastic (LoRa) | ACARS | VDL Mode 2 |
 |---|---|---|---|---|---|---|---|---|
-| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) | 400-406 MHz, 240 kS/s (any rate from 48 kS/s), or FM audio | The slot Meshtastic picks for the preset and channel (US LongFast: 906.875 MHz), 1 MS/s (any multiple of the LoRa bandwidth) | 131.550, 131.125 MHz … (US), 131.525, 131.725, 131.825 MHz (Europe): several channels from one capture at 2.4 MS/s (any multiple of 12.5 kHz), or AM audio | 136.975 MHz (everywhere) and the regional ones (136.725 … 136.875 in Europe, 136.650 … 136.800 in the US), several from one capture at 1.05 MS/s (any multiple of 42 kHz) |
-| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41 weather balloons: position, altitude, velocity, temperature, serial, battery, burst-kill countdown | Meshtastic mesh traffic on the default channel and any channel whose key is given: text messages, positions, node info, telemetry, traceroutes, neighbour lists, acknowledgements; any LoRa frame with an explicit header | Airline operations messages between aircraft and ground: positions, out/off/on/in times, weather requests, free text; registration, flight number, label, message number | The digital successor of ACARS: AVLC frames between aircraft and ground stations, carrying ACARS, ground stations' announcements (GSIF), aircraft logging on with their position and destination, and ATN traffic (CPDLC, ADS-C) |
-| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame format as rs1729's RS project documents it (GPL-3.0, read for format facts only); its rs41mod as oracle | Written for this package: LoRa coding from the format as gr-lora_sdr implements it, Meshtastic from its firmware and protobuf definitions (all GPL-3.0, read for format facts only); gr-lora_sdr as oracle | Written for this package: the frame format and the demodulator's method as acarsdec documents and implements them (LGPL-2.0, read, not copied); acarsdec as oracle | Written for this package from the format as dumpvdl2 implements it (GPL-3.0, read for format facts only); dumpvdl2 as oracle |
-| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--symbol-rate 72000\|80000] [--web PORT]` | `rtlsdr-tool sonde [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` | `rtlsdr-tool mesh [--preset LongFast] [--region US] [--channel NAME:KEY] [--ifile FILE] [--json]`; `rtlsdr-tool lora --ifile FILE` for plain LoRa | `rtlsdr-tool acars [--region us\|eu \| --freq MHZ,...] [--ifile FILE [--center HZ] \| --wav FILE] [--json]` | `rtlsdr-tool vdl2 [--region eu\|us \| --freq MHZ,...] [--ifile FILE [--center HZ]] [--json] [--raw]` |
-| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod `--json` (the JSON lines radiosonde_auto_rx reads) | One line, or one JSON object, a packet; field names follow Meshtastic's protobufs | acarsdec `-o 4` (its JSON fields, same values) | dumpvdl2's JSON (`vdl2`/`avlc` objects, the fields this decoder knows), or its raw frames |
+| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) | 400-406 MHz, 240 kS/s (RS41 and DFM: any rate from 48 kS/s; M10/M20 at 288 kS/s: any rate from 96 kS/s), or FM audio | The slot Meshtastic picks for the preset and channel (US LongFast: 906.875 MHz), 1 MS/s (any multiple of the LoRa bandwidth) | 131.550, 131.125 MHz … (US), 131.525, 131.725, 131.825 MHz (Europe): several channels from one capture at 2.4 MS/s (any multiple of 12.5 kHz), or AM audio | 136.975 MHz (everywhere) and the regional ones (136.725 … 136.875 in Europe, 136.650 … 136.800 in the US), several from one capture at 1.05 MS/s (any multiple of 42 kHz) |
+| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41, Graw DFM-06/09/17 and Meteomodem M10/M20 weather balloons: position, altitude, velocity, temperature, serial, battery | Meshtastic mesh traffic on the default channel and any channel whose key is given: text messages, positions, node info, telemetry, traceroutes, neighbour lists, acknowledgements; any LoRa frame with an explicit header (one preset on one slot, or several presets and slots from one capture) | Airline operations messages between aircraft and ground: positions, out/off/on/in times, weather requests, free text; registration, flight number, label, message number | The digital successor of ACARS: AVLC frames between aircraft and ground stations, carrying ACARS, ground stations' announcements (GSIF), aircraft logging on with their position and destination, and ATN traffic (CPDLC, ADS-C) |
+| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame formats as rs1729's RS project documents them (GPL-3.0, read for format facts only); its rs41mod, dfm09mod and m10m20mod as oracles | Written for this package: LoRa coding from the format as gr-lora_sdr implements it, Meshtastic from its firmware and protobuf definitions (all GPL-3.0, read for format facts only); gr-lora_sdr as oracle | Written for this package: the frame format and the demodulator's method as acarsdec documents and implements them (LGPL-2.0, read, not copied); acarsdec as oracle | Written for this package from the format as dumpvdl2 implements it (GPL-3.0, read for format facts only); dumpvdl2 as oracle |
+| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--symbol-rate 72000\|80000] [--web PORT]` | `rtlsdr-tool sonde [--type rs41\|dfm\|m10] [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` | `rtlsdr-tool mesh [--preset LongFast] [--region US] [--channel NAME:KEY] [--ifile FILE] [--json]`; `rtlsdr-tool lora --ifile FILE` for plain LoRa; `--presets LongFast,MediumFast,...` (`--all-slots --center HZ`) for several at once | `rtlsdr-tool acars [--region us\|eu \| --freq MHZ,...] [--ifile FILE [--center HZ] \| --wav FILE] [--json]` | `rtlsdr-tool vdl2 [--region eu\|us \| --freq MHZ,...] [--ifile FILE [--center HZ]] [--json] [--raw]` |
+| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod, dfm09mod and m10m20mod `--json` (the JSON lines radiosonde_auto_rx reads) | One line, or one JSON object, a packet; field names follow Meshtastic's protobufs | acarsdec `-o 4` (its JSON fields, same values) | dumpvdl2's JSON (`vdl2`/`avlc` objects, the fields this decoder knows), or its raw frames |
 
 ## How they were checked
 
@@ -266,9 +266,124 @@ How it was checked:
   temperature worked out independently; subtype, frequency and countdown); the receiver on a signal from a GFSK
   modulator written in the test, 4 kHz off, from I/Q and from FM audio of the opposite polarity; noise alone.
 * **Not done:** humidity and pressure (rs41mod's formulas for them are partly empirical and were not taken), extended
-  frames' XDATA (ozone sondes and the like), the other sonde types radiosonde_auto_rx knows (DFM, M10/M20, RS92, iMet,
-  …), uploading to SondeHub, and following one sonde continuously once `--scan` has found it (the scan loop revisits
-  every sonde each round, a position every 15 s or so).
+  frames' XDATA (ozone sondes and the like), the other sonde types radiosonde_auto_rx knows (RS92, iMet, …; DFM and
+  M10/M20 are below), uploading to SondeHub, and following one sonde continuously once `--scan` has found it (the scan
+  loop revisits every sonde each round, a position every 15 s or so).
+
+### Radiosondes (Graw DFM-06, DFM-09, DFM-17)
+
+DFM sondes send 2500 symbols a second, Manchester coded (so 1250 bit/s), as 2-FSK. A frame is 280 bits: the header
+0x45CF and three blocks (one of configuration, two of data), each a run of Hamming(8,4) codewords (four data bits, four
+parity bits) interleaved within its block. There is no CRC over a frame: the code, at distance 4, mends one bad bit in
+a codeword and notices two. A data block holds 48 bits and its packet number; nine packets (time; latitude and speed;
+longitude and heading; height and climb; the geoid height; satellites and the date, among others) make a second and come
+two to a frame, and the configuration block carries one channel a frame, round robin: measurement counts as 24-bit
+floats, battery, the processor's temperature, the serial number in two halves. The format facts are from rs1729's RS
+project (dfm09mod, GPL-3.0, read for them only); the code is this package's:
+
+* **Channel and detection.** The I/Q path is the shared front end (`FMFrontEnd`): an oscillator moves the sonde to
+  zero, a boxcar decimates to about 48 kHz and a ±4.5 kHz low-pass keeps the signal, with the same carrier search as
+  the RS41's. Two detectors read it. The default is a **non-coherent two-tone detector**: the filtered samples are
+  correlated over a symbol with each of the two tones (±2.4 kHz) and the statistic is the difference of the magnitudes,
+  which has no threshold; dfm09mod's own I/Q mode does the same. The other (`--discriminator`) is an FM discriminator,
+  which runs below its threshold several dB sooner: on the same signals it gets 10 of 42 seconds at Es/N0 8 dB and none
+  at 6, where the tone detector gets 40 and 10.
+* **Frames.** The header is found by a Pearson correlation of its 32 symbols with symbol integrals (offset, level and
+  polarity drop out, and the polarity comes out as `inverted`), refined to a quarter sample; a bit is the second
+  symbol's integral less the first's, which also cancels a carrier offset. A header is short, so noise passes it now and
+  then: a frame counts only if the code finds two of its three blocks intact (one, with a very clean header). After a
+  frame the next header is looked for where it should be, at a lower bar, because the sonde never pauses.
+* **Reports.** A report needs packets 0, 1, 2, 3, 4 and 8 of one second, in the order sent and within six frames, with
+  no codeword beyond repair (a block with more than four repaired codewords is not trusted either). One lost packet
+  must not be made up with the same one from the second before, which a six-frame limit alone lets through when the
+  frames' timing puts the old packet just inside it (dfm09mod's rule is that limit; it printed a wrong height at 7 dB in
+  these comparisons, and this decoder did before it had the rule). Two things stand in for the CRC: the frame counter minus the time's seconds
+  (mod 256) must stay what it was (two reports in a row that disagree move the reference), and the numbers must be
+  plausible. The serial number comes from the channel that carries it once its two halves have come round twice alike;
+  its channel number says the model (6 DFM-06, A DFM-09, B and C DFM-17 or DFM-09P, D DFM-17P). The temperature comes
+  from the thermistor's count and two reference counts (the references give the gain) through a Steinhart-Hart curve fitted
+  to the datasheet's table; DFM-17s are told from DFM-09s of the same channel number by their serial (23000000 and up),
+  where dfm09mod also uses the signal's polarity.
+* **Soft decisions** (`--repair`, off by default): a codeword with two bad bits has four equally near codewords; this
+  takes the one the soft decisions favour. It is right about half the time: at Es/N0 8 dB it gains nothing and loses
+  nothing, and below 6 dB it gets many more reports and some wrong ones (a speed of 33.7 m/s for 8.1), so it is an option.
+
+How it was checked:
+
+* **No real recording.** None could be found for the DFM (rs1729's repository has RS41 recordings only), so nothing
+  here has met a real DFM signal. The tone detector's ±2.4 kHz is an assumption (dfm09mod's I/Q mode assumes about
+  ±2.25 kHz; `--deviation` changes it), and the packet layouts rest on dfm09mod's reading of them. What is checked is
+  that dfm09mod reads the signals `Tools/dfm-oracle.py` makes exactly as sent (it decodes all of them, so that is an
+  independent reading of the format) and that this decoder agrees with both.
+* **Synthetic I/Q.** `Tools/dfm-oracle.py` builds a flight from the format alone (nine packets a second, Hamming codewords,
+  interleaving, the header, Manchester symbols, a Gaussian-filtered ±2.4 kHz modulator, a carrier offset, noise for the
+  Es/N0 asked for, 240 kS/s) and writes what it sent; the thermistor channels come from the datasheet's table.
+  `Tools/dfm-oracle-compare.py` gives dfm09mod (`--IQ FQ --lpIQ --ecc --ptu --json`, told the exact carrier) and this
+  receiver (starting blind at 0 Hz) the same signal and checks both against what was sent. Seconds out of the 42 (or
+  whatever was sent) that came out, three seeds each; "wrong" is a report with a field that differs from what was sent:
+
+@@DFM_TABLE@@
+
+* **Unit tests**: every single-bit error of every codeword mended and every double-bit error noticed; the interleaver
+  round trip; packets built field by field (a known position, speed, time and date, with the GPS-time conversion
+  checked against a calendar); serial and model for DFM-06, -09, -09P, -17 and -17P; the temperature against the
+  datasheet table across −50 to +35 °C; the other position modes (sea-level heights, a second position, 26 bytes of
+  extra data); a wrong time withheld because the counter disagrees; a lost packet not made up
+  from the second before (the frame timing set so that the old rule would have let it through); the receiver on FM audio
+  of either polarity and on I/Q 4 kHz off, with the discriminator and the tone detector, a gap in the signal, and noise
+  alone.
+* **Not done:** the instruments behind the extra-data mode (the bytes are passed on as hex), humidity and pressure (the
+  P models carry a pressure sensor: its counts are not converted), the second position of mode 3 (read past), and
+  dfm09mod's polarity-dependent rule for DFM-17s. The DFM-06's serial and the PS-15 layout have only been tried on
+  synthetic frames.
+
+### Radiosondes (Meteomodem M10 and M20)
+
+The M10 and M20 send 9600 symbols a second (some M10s 9616) of 2-FSK, Manchester coded and then differentially coded: a
+frame follows a 32-symbol header, its bits are the second symbol of each pair less the first, and a data bit is 1
+where two such bits in a row are alike, so polarity does not matter. A frame starts with its length byte and a type
+byte (0x9F M10 with a Trimble GPS receiver, 0xAF M10+ with a Gtop one, 0x20 M20), has the time, position, velocity,
+serial number, sensor readings and a counter at fixed places, and ends with a 16-bit checksum (a linear map over GF(2)
+that the frame's every byte goes through), once a second; every tenth second the M10 sends a second kind of frame
+(signal levels) as well. The format facts are from rs1729's RS project (m10m20mod, GPL-3.0, read for them only):
+
+* **Channel and detection.** As for the DFM, at about 96 kHz with a ±9 kHz low-pass, the tone detector at ±4.32 kHz
+  (m10m20mod's own I/Q figure) by default, `--discriminator` for the other, `--deviation` to move the tones.
+* **Frames.** The header correlation and the Manchester and differential decoding are as above. The length byte is read at
+  once (sixteen symbols cannot drift); the frame is then read at a grid of symbol rates (9600 ± 0.36 % in 0.012 % steps,
+  the last good rate first, either polarity) until the checksum holds, because a quarter of a symbol over a
+  1700-symbol frame is 150 parts per million and the two rates differ by about 1700. The checksum is what accepts a frame,
+  together with a known type byte.
+* **Reports.** Positions, speeds and times as sent (the M10's latitude and longitude are 32-bit fractions of a turn,
+  the M20's millionths of a degree, the M10+'s decimal); the M10 sends GPS time and the offset to UTC, the JSON gives UTC
+  as m10m20mod does (the M20's time stays GPS, the M10+ sends UTC); serial numbers in the notation radiosonde_auto_rx
+  uses; the thermistor through its three-range divider and a Steinhart-Hart curve fitted to the datasheet's table;
+  battery.
+* **A carrier far off.** A frame heard with the listening frequency 8 kHz from the carrier gives a biased mean from the
+  discriminator (the filter clips one tone), so the frame-based fine tuning of all three sonde receivers now acts only
+  within about a kilohertz or two of the carrier, and leaves the rest to the carrier search. Two bugs in the search
+  that this exposed are fixed for all of them: its correction was applied to a listening frequency that had already moved
+  and its averaged spectrum mixed two oscillator settings (both in the regression tests).
+
+How it was checked:
+
+* **No real recording**, as for the DFM: `Tools/m10-oracle.py` builds M10, M10+ and M20 frames from the layout
+  (checksum, serial, a thermistor circuit with the datasheet's table) and a signal from them, and m10m20mod decodes
+  them all as sent, which is the independent reading of the format; this decoder agrees with both.
+  `Tools/m10-oracle-compare.py` runs both on I/Q (m10m20mod `--IQ FQ --lpIQ --json --ptu`), 288 kS/s, starting blind.
+  Frames out of 30, three seeds each, one frame a second:
+
+@@M10_TABLE@@
+
+* **Unit tests**: three frames from the generator (an M10, an M10+ and an M20) that m10m20mod reads with a good
+  checksum, against this package's checksum; the checksum's linearity; every field of each (including the day before for a
+  UTC time just past midnight GPS, western longitudes and negative heights); serial numbers and JSON text as m10m20mod
+  prints them; the thermistor in each of the divider's ranges against the datasheet table; frames with extra bytes; the
+  receiver on FM audio of either polarity and on I/Q 5 kHz off, at 9590, 9600, 9616 and 9625 symbols a second with the
+  discriminator and the tone detector, a damaged frame lost and the next one found, and noise alone.
+* **Not done:** humidity and pressure (m10m20mod's formulas for them are partly empirical), the M10's second kind of
+  frame (the signal levels: it is recognised and skipped), the M2K2's own differences (it is read as an M10 with its time
+  left in GPS), and the M10+'s time and date are checked on synthetic frames only.
 
 ### Meshtastic (LoRa)
 
@@ -343,9 +458,22 @@ How it was checked:
   type and on broken messages; the default channel's hash (8), key expansion, the US, EU_868 and EU_433 LongFast
   frequencies; the packets above; and the receiver on frames from an ideal chirp modulator written in the test
   (ShortFast, 15 ppm fast, 0 dB, fed in odd-sized blocks), and on noise alone.
+* **Several presets or slots at once** (`MeshtasticMultiReceiver`, `rtlsdr-tool mesh --presets A,B,...`): one capture of
+  1 or 2 MS/s (a whole multiple of every LoRa bandwidth) feeds a channelizer per listener, which mixes the channel to
+  zero, low-passes it (a windowed sinc that keeps ±0.75 bandwidths and stops what would fold into that) and decimates it
+  to two samples a chip for a `LoRaReceiver`; listeners run on separate cores. `MeshtasticPlan` picks the smallest rate
+  whose usable 80 % holds every channel clear of the dongle's DC spike, or refuses ("those channels span 14 MHz"), and
+  `--all-slots --center HZ` listens to every slot of the region that fits around a frequency. A transmission heard by
+  neighbouring listeners (a strong one leaks into the next slot) comes out once, from the listener whose centre the carrier
+  is nearest, and the CRC-failed fragments it leaves in a neighbour of the same preset are dropped. Checked in the unit tests:
+  the planner (EU_868 puts every default preset in one capture; channels 4 MHz apart are refused; and on the command line
+  the US defaults of three presets, 14 MHz apart, are); ShortFast, MediumFast and ShortTurbo (250 and 500 kHz) in one
+  2 MS/s capture, each frame out on its own listener at its carrier frequency to within 800 Hz; a duplicate listener reported once, by the nearer; a signal at −4 dB SNR through the channelizer; a
+  strong neighbour on the next slots leaving nothing; noise alone. On the command line, a capture of six frames on three
+  presets in four US slots each (12 listeners) printed exactly the six.
 * **Not done:** implicit-header LoRa (Meshtastic doesn't use it), AES-CCM channels (an opt-in in development
-  firmware), decoding the payloads of the less common applications (they are shown as bytes), and listening to more
-  than one slot or preset at once.
+  firmware), decoding the payloads of the less common applications (they are shown as bytes), and a capture wider than
+  1.6 MHz (a dongle's limit: every US preset at once needs 20 MHz, as the RTL-SDR.com article says).
 
 ### ACARS
 
@@ -484,7 +612,7 @@ drops whole blocks and reports it rather than queueing without limit, so use a r
 
 ## Rerunning the comparisons
 
-The oracles need dump1090-mutability, dump978, rtl_433, meteor_demod, SatDump, rs41mod, GNU Radio 3.10 with gr-lora_sdr,
+The oracles need dump1090-mutability, dump978, rtl_433, meteor_demod, SatDump, rs41mod, dfm09mod, m10m20mod, GNU Radio 3.10 with gr-lora_sdr,
 acarsdec, dumpvdl2 and a few Python packages; none of
 that is needed for `swift test`.
 
@@ -516,6 +644,15 @@ Tools/sonde-oracle-compare.py RS/demod/mod/rs41mod rtlsdr-tool RS/rs41/wav/*.wav
 RS/demod/mod/rs41mod -i --ecc2 -r RS/rs41/wav/20140717_402MHz.wav > frames.txt              # dewhitened frames
 Tools/rs41-oracle.py frames.txt sonde --ebn0 9 --offset 3000                              # numpy
 rtlsdr-tool sonde --ifile sonde.u8 --json; RS/demod/mod/rs41mod --IQ 0.0125 --lpIQ --ecc2 --json sonde.wav
+
+(cd RS/demod/mod && gcc dfm09mod.c demod_mod.o -lm -o dfm09mod && gcc m10m20mod.c demod_mod.o -lm -o m10m20mod)
+Tools/dfm-oracle-compare.py RS/demod/mod/dfm09mod rtlsdr-tool /tmp/dfm --esn0=16,12,10,9,8,7,6 --seeds 1,2,3 --seconds 40    # numpy
+Tools/dfm-oracle-compare.py RS/demod/mod/dfm09mod rtlsdr-tool /tmp/dfm --model dfm17p --esn0 12 --invert --offset -9000 --drift 5000
+Tools/m10-oracle-compare.py RS/demod/mod/m10m20mod rtlsdr-tool /tmp/m10 --esn0=14,12,10,9,8,7,6 --seeds 1,2,3 --seconds 30    # numpy
+Tools/m10-oracle-compare.py RS/demod/mod/m10m20mod rtlsdr-tool /tmp/m10 --model m20 --baud 9616 --deviation 5200 --offset -8000
+Tools/dfm-oracle.py dfm --model dfm09 --esn0 12 && rtlsdr-tool sonde --type dfm --ifile dfm.u8 --json; RS/demod/mod/dfm09mod --IQ 0.0125 --lpIQ --ecc --ptu --json dfm.wav
+MESH_GRID_DUMP=grid.u8 swift test --filter aGridAlignedCapture                              # a capture of three presets on the US slot grid
+rtlsdr-tool mesh --presets ShortFast,ShortSlow,MediumFast --all-slots --region US --ifile grid.u8 --rate 2000000 --center 906500000
 
 git clone https://github.com/tapparelj/gr-lora_sdr                                        # GNU Radio 3.10 module (862746d)
 Tools/generate-lora-vectors.py Tests/RTLSDRDecodersTests/Resources/lora-symbol-vectors.txt

@@ -29,15 +29,15 @@ usage:
   rtlsdr-tool ism --code '[19]{36}b5a8f0470' [--json]
   rtlsdr-tool meteor [--soft FILE | --ifile FILE] [--rate 288000] [--freq 137.9e6] [--mode oqpsk|qpsk] [--symbol-rate 72000|80000] [--out DIR]
                      [--web PORT [--host 127.0.0.1] [--speed 1]] [--cadu FILE] [--write-soft FILE] [--gain 40.2] [--seconds N]
-  rtlsdr-tool sonde [--type rs41|dfm] [--deviation <Hz>] [--discriminator] [--repair] [--wav FILE | --ifile FILE [--rate 240000] [--offset <Hz>] | --freq <Hz>] [--json] [--verbose] [--gain auto|<dB>] [--seconds N]
-  rtlsdr-tool sonde --scan [--type rs41|dfm] [--from 400e6 --to 406e6] [--dwell 3] [--threshold 8] [--json] [--verbose] [--gain 40.2]
+  rtlsdr-tool sonde [--type rs41|dfm|m10] [--deviation <Hz>] [--discriminator] [--repair] [--wav FILE | --ifile FILE [--rate 240000] [--offset <Hz>] | --freq <Hz>] [--json] [--verbose] [--gain auto|<dB>] [--seconds N]
+  rtlsdr-tool sonde --scan [--type rs41|dfm|m10] [--from 400e6 --to 406e6] [--dwell 3] [--threshold 8] [--json] [--verbose] [--gain 40.2]
   rtlsdr-tool lora --ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>] [--freq <Hz>] [--sf 11] [--bw 250000] [--cr 1]
                    [--sync 0x2B] [--preamble 16] [--ldro on|off] [--symbols]
   rtlsdr-tool acars [--region us|eu | --freq 131.55,130.025,...] [--rate 2400000] [--json] [--gain auto|<dB>] [--seconds N]
                     [--ifile FILE [--center <Hz>]] [--wav FILE (12.5 kHz AM audio, a channel each)]
   rtlsdr-tool vdl2 [--region eu|us | --freq 136.975,136.875,...] [--rate 1050000 (a multiple of 42 kHz)] [--json] [--verbose] [--raw]
                    [--gain auto|<dB>] [--ppm N|eeprom] [--seconds N] [--ifile FILE [--center <Hz>]]
-  rtlsdr-tool mesh [--preset LongFast] [--region US] [--slot N | --freq <Hz>] [--primary NAME[:KEY]] [--channel NAME[:KEY]]...
+  rtlsdr-tool mesh [--preset LongFast | --presets LongFast,MediumFast,... [--all-slots] [--center <Hz>]] [--region US] [--slot N | --freq <Hz>] [--primary NAME[:KEY]] [--channel NAME[:KEY]]...
                    [--ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>]] [--json] [--verbose] [--gain auto|<dB>] [--ppm 0] [--seconds N]
   rtlsdr-tool serve [--address 127.0.0.1] [--port 1234] [--rate 2048000] [--freq 100e6] [--gain auto|<dB>] [--allow-bias-tee] [--fast]
 

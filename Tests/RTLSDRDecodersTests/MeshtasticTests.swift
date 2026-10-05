@@ -191,52 +191,57 @@ struct MeshtasticPacketTests {
     }
 }
 
+/// I/Q at `rate` for LoRa frames: ideal chirps (each starting at phase 0, as gr-lora_sdr makes them), a carrier
+/// offset with the matching transmitter clock error, and complex Gaussian noise for `snr` dB in the LoRa bandwidth.
+func loraModulate(_ frames: [[Int]], _ p: LoRaParameters, rate: Double, rf: Double, ppm: Double, snr: Double,
+                      gapSymbols: Double = 12, seed: UInt64 = 1) -> [Float] {
+    let n = Double(p.chips), d = ppm * 1e-6, cfo = rf * d
+    // Chirp ids in order, with down-chirps marked by nil; each frame is preamble, sync word, 2.25 down-chirps, data.
+    var plan: [(start: Double, id: Int?, length: Double)] = []
+    var chip = gapSymbols * n
+    let (sync0, sync1) = p.syncSymbols
+    for frame in frames {
+        for id in [Int](repeating: 0, count: p.preambleLength) + [sync0, sync1] { plan.append((chip, id, n)); chip += n }
+        for length in [n, n, n / 4] { plan.append((chip, nil, length)); chip += length }
+        for id in frame { plan.append((chip, id, n)); chip += n }
+        chip += gapSymbols * n
+    }
+    let total = Int(chip / p.bandwidth * rate / (1 + d))
+    var state = seed, output = [Float](repeating: 0, count: 2 * total)
+    func uniform() -> Double {
+        state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+        return (Double(state >> 11) + 0.5) / Double(1 << 53)
+    }
+    let sigma = (pow(10, -snr / 10) * rate / p.bandwidth / 2).squareRoot()
+    var segment = 0
+    for k in 0..<total {
+        let time = Double(k) / rate
+        let c = time * p.bandwidth * (1 + d)                 // the transmitter's chip clock
+        while segment + 1 < plan.count && plan[segment + 1].start <= c { segment += 1 }
+        var i = 0.0, q = 0.0
+        if let s = plan.isEmpty ? nil : plan[segment], c >= s.start && c < s.start + s.length {
+            let t = c - s.start
+            var phase: Double
+            if let id = s.id {
+                let fold = t >= n - Double(id) ? 1.5 : 0.5
+                phase = 2 * Double.pi * (t * t / (2 * n) + (Double(id) / n - fold) * t)
+            } else {
+                phase = -2 * Double.pi * (t * t / (2 * n) - 0.5 * t)
+            }
+            phase += 2 * Double.pi * cfo * time
+            i = cos(phase); q = sin(phase)
+        }
+        let r = (-2 * log(uniform())).squareRoot(), a = 2 * Double.pi * uniform()
+        output[2 * k] = Float(i + sigma * r * cos(a))
+        output[2 * k + 1] = Float(q + sigma * r * sin(a))
+    }
+    return output
+}
+
 struct LoRaReceiverTests {
-    /// I/Q at `rate` for LoRa frames: ideal chirps (each starting at phase 0, as gr-lora_sdr makes them), a carrier
-    /// offset with the matching transmitter clock error, and complex Gaussian noise for `snr` dB in the LoRa bandwidth.
     private func modulate(_ frames: [[Int]], _ p: LoRaParameters, rate: Double, rf: Double, ppm: Double, snr: Double,
                           gapSymbols: Double = 12, seed: UInt64 = 1) -> [Float] {
-        let n = Double(p.chips), d = ppm * 1e-6, cfo = rf * d
-        // Chirp ids in order, with down-chirps marked by nil; each frame is preamble, sync word, 2.25 down-chirps, data.
-        var plan: [(start: Double, id: Int?, length: Double)] = []
-        var chip = gapSymbols * n
-        let (sync0, sync1) = p.syncSymbols
-        for frame in frames {
-            for id in [Int](repeating: 0, count: p.preambleLength) + [sync0, sync1] { plan.append((chip, id, n)); chip += n }
-            for length in [n, n, n / 4] { plan.append((chip, nil, length)); chip += length }
-            for id in frame { plan.append((chip, id, n)); chip += n }
-            chip += gapSymbols * n
-        }
-        let total = Int(chip / p.bandwidth * rate / (1 + d))
-        var state = seed, output = [Float](repeating: 0, count: 2 * total)
-        func uniform() -> Double {
-            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-            return (Double(state >> 11) + 0.5) / Double(1 << 53)
-        }
-        let sigma = (pow(10, -snr / 10) * rate / p.bandwidth / 2).squareRoot()
-        var segment = 0
-        for k in 0..<total {
-            let time = Double(k) / rate
-            let c = time * p.bandwidth * (1 + d)                 // the transmitter's chip clock
-            while segment + 1 < plan.count && plan[segment + 1].start <= c { segment += 1 }
-            var i = 0.0, q = 0.0
-            if let s = plan.isEmpty ? nil : plan[segment], c >= s.start && c < s.start + s.length {
-                let t = c - s.start
-                var phase: Double
-                if let id = s.id {
-                    let fold = t >= n - Double(id) ? 1.5 : 0.5
-                    phase = 2 * Double.pi * (t * t / (2 * n) + (Double(id) / n - fold) * t)
-                } else {
-                    phase = -2 * Double.pi * (t * t / (2 * n) - 0.5 * t)
-                }
-                phase += 2 * Double.pi * cfo * time
-                i = cos(phase); q = sin(phase)
-            }
-            let r = (-2 * log(uniform())).squareRoot(), a = 2 * Double.pi * uniform()
-            output[2 * k] = Float(i + sigma * r * cos(a))
-            output[2 * k + 1] = Float(q + sigma * r * sin(a))
-        }
-        return output
+        loraModulate(frames, p, rate: rate, rf: rf, ppm: ppm, snr: snr, gapSymbols: gapSymbols, seed: seed)
     }
 
     @Test func meshtasticFramesThroughTheReceiver() throws {

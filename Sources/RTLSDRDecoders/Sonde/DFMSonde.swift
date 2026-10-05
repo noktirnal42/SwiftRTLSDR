@@ -106,8 +106,11 @@ public final class DFMDecoder {
     private var referenceOhms = 220e3
     private var battery = 0.0
 
-    // Data packets: when each last arrived (frame count; nil if not yet), and what they said.
+    // Data packets: when each last arrived (frame count and a running number, nil if not yet), and what they said.
     private var arrived = [Double?](repeating: nil, count: 9)
+    private var arrivedNumber = [Int?](repeating: nil, count: 9)
+    private var packetsSeen = 0
+    private var previousClose: Int?                // the number of the last packet 8 (the one that closed the second before)
     private var mode = -1
     private var counter = 0
     private var seconds = 0.0
@@ -281,6 +284,8 @@ public final class DFMDecoder {
         let id = bits.field(48, 4)
         guard id <= 8 else { return nil }
         arrived[id] = frameCount
+        packetsSeen += 1
+        arrivedNumber[id] = packetsSeen
         if id == 0 {
             let m = bits.field(16, 8)
             mode = m > 1 && m < 5 ? m : -1
@@ -330,16 +335,21 @@ public final class DFMDecoder {
         hour = bits.field(21, 5)
         minute = bits.field(26, 6)
         let satellitesInSolution = bits.field(32, 8)
+        defer { previousClose = arrivedNumber[8] }               // whether or not this second made a report
         return makeReport(satellites: satellitesInSolution, frameCount: frameCount)
     }
 
     private func makeReport(satellites: Int, frameCount: Double) -> DFMReport? {
+        // Packets 0 to 4 and 8 of this second, close together and in the order they are sent: one lost packet must not
+        // be made up with the same one from the second before.
+        var last = previousClose ?? 0
         for id in [0, 1, 2, 3, 4, 8] {
-            guard let at = arrived[id], frameCount - at < 6 else { return nil }
+            guard let at = arrived[id], frameCount - at < 6, let number = arrivedNumber[id], number > last else { return nil }
+            last = number
         }
         guard seconds < 60, (1...12).contains(month), (1...31).contains(day), hour < 24, minute < 60, year >= 2000,
               abs(latitude) <= 90, abs(longitude) <= 180 else { return nil }
-        let days = Self.daysSince1980(year: year, month: month, day: day)
+        let days = GPSTime.daysSince1980(year: year, month: month, day: day)
         let gpsSeconds = days * 86_400 + hour * 3600 + minute * 60 + Int(seconds + 0.5)
         // The counter minus the time's seconds (mod 256) stays put; two reports in a row that disagree with the
         // reference mean it has moved (or the first one was wrong).
@@ -362,17 +372,5 @@ public final class DFMDecoder {
             heading: heading, verticalSpeed: verticalSpeed, satellites: inSolution,
             batteryVolts: sensorChannels >= 0xa && battery > 0 ? battery : nil,
             temperature: ptu, geoidHeight: mode <= 2 ? geoid : nil, positionMode: mode <= 2 ? 2 : mode, aux: extra)
-    }
-
-    /// Days from 1980-01-06 (GPS time zero) to a civil date.
-    static func daysSince1980(year: Int, month: Int, day: Int) -> Int {
-        // Civil date to days since 1970-01-01 (proleptic Gregorian), then to 1980-01-06 (3657 days later).
-        let y = month <= 2 ? year - 1 : year
-        let era = (y >= 0 ? y : y - 399) / 400
-        let yearOfEra = y - era * 400
-        let monthIndex = (month + 9) % 12
-        let dayOfYear = (153 * monthIndex + 2) / 5 + day - 1
-        let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
-        return era * 146_097 + dayOfEra - 719_468 - 3657
     }
 }

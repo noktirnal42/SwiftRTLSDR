@@ -31,6 +31,14 @@ public final class FMFrontEnd {
     /// Input samples per output sample.
     public let decimation: Int
     private(set) var offsetHz: Double
+    /// The frequency the block being processed is mixed with (`offsetHz` can change within it, but the oscillator does
+    /// not until the next block), and whether the carrier search has already moved it in this block.
+    private var blockOffsetHz: Double
+    private var movedInBlock = false
+    // Where the listening frequency was, block by block: a frame found later must be placed against the frequency its
+    // samples were made with, not the one the receiver has moved to since.
+    private var outputSamples = 0
+    private var offsetHistory: [(sample: Int, offset: Double)]
     private var oscillator = (1.0, 0.0)            // e^(−2πi·offset·t), advanced by a rotation each sample
     private var rotations = 0
     private var sumI = 0.0, sumQ = 0.0, summed = 0
@@ -64,6 +72,8 @@ public final class FMFrontEnd {
                 searchSpanHz: Double = 7_000, tones: ToneDetector? = nil) {
         inputRate = sampleRate
         self.offsetHz = offsetHz
+        blockOffsetHz = offsetHz
+        offsetHistory = [(0, offsetHz)]
         decimation = max(1, Int((sampleRate / targetAudioRate).rounded()))
         audioRate = sampleRate / Double(decimation)
         reachHz = min(20_000, 0.42 * audioRate)
@@ -94,6 +104,13 @@ public final class FMFrontEnd {
     /// Where the receiver is listening, relative to the tuned frequency.
     public var listeningOffsetHz: Double { offsetHz }
 
+    /// The frequency the receiver was listening at when output sample `index` (counted from the first) was made.
+    public func listeningOffset(atSample index: Double) -> Double {
+        var offset = offsetHistory[0].offset
+        for entry in offsetHistory where Double(entry.sample) <= index { offset = entry.offset }
+        return offset
+    }
+
     /// Listens at `offset` (hertz from the tuned frequency) from now on: the signal has been seen there.
     public func listen(at offset: Double) {
         offsetHz = max(-inputRate / 2, min(inputRate / 2, offset))
@@ -113,6 +130,21 @@ public final class FMFrontEnd {
         var statistic: [Float] = []
         audio.reserveCapacity(block.count / 2 / decimation + 1)
         if tone != nil { statistic.reserveCapacity(block.count / 2 / decimation + 1) }
+        if offsetHistory[offsetHistory.count - 1].offset != offsetHz { offsetHistory.append((outputSamples, offsetHz)) }
+        if offsetHz != blockOffsetHz {
+            // The averaged spectrum would mix samples from two oscillator settings: start it again.
+            for k in 0..<Self.searchSize { searchPower[k] = 0 }
+            searchTransforms = 0
+            searchFilled = 0
+        }
+        blockOffsetHz = offsetHz
+        movedInBlock = false
+        defer {
+            outputSamples += audio.count
+            // Forget what no frame can still need (a few seconds back).
+            let horizon = outputSamples - Int(4 * audioRate)
+            while offsetHistory.count > 1 && offsetHistory[1].sample <= horizon { offsetHistory.removeFirst() }
+        }
         let step = -2 * Double.pi * offsetHz / inputRate
         let rotation = (cos(step), sin(step))
         var index = 0
@@ -214,8 +246,11 @@ public final class FMFrontEnd {
         guard weight > 0 else { return }
         let centre = moment / weight
         lastSearch = (centre, snr)
-        if snr >= 6 && abs(centre) > 300 && samplesSinceGoodFrame > Int(3 * audioRate) {
-            listen(at: offsetHz + centre)
+        // The spectrum is of samples mixed with `blockOffsetHz`; one move a block, since the next measurement of the same
+        // block would be against the same mixing.
+        if snr >= 6 && abs(centre) > 300 && samplesSinceGoodFrame > Int(3 * audioRate) && !movedInBlock {
+            listen(at: blockOffsetHz + centre)
+            movedInBlock = true
         }
     }
 }

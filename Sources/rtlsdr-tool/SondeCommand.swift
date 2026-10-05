@@ -78,25 +78,30 @@ struct SondeOutput {
 protocol SondeReceiving: AnyObject {
     var kind: String { get }
     var rejectedHeaders: Int { get }
+    /// Where the I/Q receiver is listening relative to the tuned frequency and what its carrier search last found (nil
+    /// for audio input).
+    var tuning: (listeningHz: Double, search: (offsetHz: Double, snrDB: Double)?)? { get }
     func process(iq: [UInt8]) -> [SondeOutput]
     func process(audio: [Float]) -> [SondeOutput]
 }
 
 /// The sonde types the command knows, by `--type`.
 enum SondeType: String, CaseIterable {
-    case rs41, dfm
+    case rs41, dfm, m10
 
     var name: String { rawValue.uppercased() }
     var frequencyRange: ClosedRange<Int> {
         switch self {
         case .rs41: return RS41.frequencyRange
         case .dfm: return DFM.frequencyRange
+        case .m10: return M10.frequencyRange
         }
     }
     var description: String {
         switch self {
         case .rs41: return "RS41, 4800 bit/s GFSK"
         case .dfm: return "DFM-06/09/17, 2500 symbol/s Manchester FSK"
+        case .m10: return "M10/M20, 9600 symbol/s Manchester FSK"
         }
     }
     /// How wide a signal this type makes, for the scan loop to know what it may dwell on.
@@ -115,6 +120,11 @@ enum SondeType: String, CaseIterable {
                                        useTones: !options.discriminator, decoder: shared.dfm)
             receiver.sync.repairTwoBitErrors = options.repair
             return DFMAdapter(receiver, tunedHz: tunedHz, json: json)
+        case .m10:
+            let receiver = M10Receiver(sampleRate: sampleRate, offsetHz: offsetHz, channelCutoffHz: cutoffHz ?? 9_000,
+                                       deviationHz: options.deviationHz ?? M10Receiver.defaultDeviationHz,
+                                       useTones: !options.discriminator, decoder: shared.m10)
+            return M10Adapter(receiver, tunedHz: tunedHz, json: json)
         }
     }
 
@@ -127,6 +137,7 @@ enum SondeType: String, CaseIterable {
             let receiver = DFMReceiver(audioRate: audioRate, decoder: shared.dfm)
             receiver.sync.repairTwoBitErrors = options.repair
             return DFMAdapter(receiver, tunedHz: tunedHz, json: json)
+        case .m10: return M10Adapter(M10Receiver(audioRate: audioRate, decoder: shared.m10), tunedHz: tunedHz, json: json)
         }
     }
 
@@ -141,9 +152,9 @@ enum SondeType: String, CaseIterable {
 
 /// Receiver settings from the command line.
 struct SondeOptions {
-    /// DFM: the tones' distance from the carrier for the tone detector (the sonde's deviation).
+    /// DFM, M10: the tones' distance from the carrier for the tone detector (the sonde's deviation).
     var deviationHz: Double?
-    /// DFM: read the signal through the FM discriminator instead of the tone detector.
+    /// DFM, M10: read the signal through the FM discriminator instead of the tone detector.
     var discriminator = false
     /// DFM: replace a codeword with two bad bits by its likeliest neighbour (more frames, less trust).
     var repair = false
@@ -161,6 +172,7 @@ struct SondeOptions {
 final class SondeSharedState: @unchecked Sendable {
     let rs41 = RS41Decoder()
     let dfm = DFMDecoder()
+    let m10 = M10Decoder()
 }
 
 private final class RS41Adapter: SondeReceiving {
@@ -169,6 +181,7 @@ private final class RS41Adapter: SondeReceiving {
     let kind = "RS41"
     init(_ receiver: RS41Receiver, json: Bool) { self.receiver = receiver; self.json = json }
     var rejectedHeaders: Int { receiver.rejectedHeaders }
+    var tuning: (listeningHz: Double, search: (offsetHz: Double, snrDB: Double)?)? { (receiver.listeningOffsetHz, receiver.lastSearch) }
     func process(iq: [UInt8]) -> [SondeOutput] { convert(receiver.process(iq: iq)) }
     func process(audio: [Float]) -> [SondeOutput] { convert(receiver.process(audio: audio)) }
 
@@ -190,6 +203,7 @@ private final class DFMAdapter: SondeReceiving {
     let kind = "DFM"
     init(_ receiver: DFMReceiver, tunedHz: Double?, json: Bool) { self.receiver = receiver; self.tunedHz = tunedHz; self.json = json }
     var rejectedHeaders: Int { receiver.rejectedHeaders }
+    var tuning: (listeningHz: Double, search: (offsetHz: Double, snrDB: Double)?)? { (receiver.listeningOffsetHz, receiver.lastSearch) }
     func process(iq: [UInt8]) -> [SondeOutput] { convert(receiver.process(iq: iq)) }
     func process(audio: [Float]) -> [SondeOutput] { convert(receiver.process(audio: audio)) }
 
@@ -203,6 +217,29 @@ private final class DFMAdapter: SondeReceiving {
             return SondeOutput(kind: kind, json: event.report?.json(frequencyKHz: frequencyKHz), line: event.report?.line, note: note,
                                corrected: frame.config.corrected + frame.data[0].corrected + frame.data[1].corrected > 0,
                                offsetHz: event.frequencyOffsetHz, sampleIndex: event.sampleIndex)
+        }
+    }
+}
+
+private final class M10Adapter: SondeReceiving {
+    let receiver: M10Receiver
+    let tunedHz: Double?
+    let json: Bool
+    let kind = "M10"
+    init(_ receiver: M10Receiver, tunedHz: Double?, json: Bool) { self.receiver = receiver; self.tunedHz = tunedHz; self.json = json }
+    var rejectedHeaders: Int { receiver.rejectedHeaders }
+    var tuning: (listeningHz: Double, search: (offsetHz: Double, snrDB: Double)?)? { (receiver.listeningOffsetHz, receiver.lastSearch) }
+    func process(iq: [UInt8]) -> [SondeOutput] { convert(receiver.process(iq: iq)) }
+    func process(audio: [Float]) -> [SondeOutput] { convert(receiver.process(audio: audio)) }
+
+    private func convert(_ events: [M10Event]) -> [SondeOutput] {
+        events.map { event in
+            let type = event.frame.kind.map { String(format: "type 0x%02X", $0.rawValue) } ?? "unknown type"
+            let note = "\(type), \(event.frame.length + 1) bytes, \(Int(event.symbolRate.rounded())) symbols/s" + (event.inverted ? ", inverted" : "")
+            var frequencyKHz: Int?
+            if let tunedHz { frequencyKHz = Int(((tunedHz + (event.frequencyOffsetHz ?? 0)) / 1000).rounded()) }
+            return SondeOutput(kind: kind, json: event.report?.json(frequencyKHz: frequencyKHz), line: event.report?.line, note: note,
+                               corrected: false, offsetHz: event.frequencyOffsetHz, sampleIndex: event.sampleIndex)
         }
     }
 }
@@ -222,7 +259,16 @@ private final class SondePrinter: @unchecked Sendable {
         self.verbose = verbose
     }
 
-    func process(iq: [UInt8]) { for receiver in receivers { print(receiver.process(iq: iq)) } }
+    func process(iq: [UInt8]) {
+        for receiver in receivers {
+            print(receiver.process(iq: iq))
+            if verbose, let tuning = receiver.tuning {
+                var text = String(format: "%@ listening at %+.2f kHz", receiver.kind, tuning.listeningHz / 1000)
+                if let search = tuning.search { text += String(format: ", carrier search: %+.2f kHz from there, %.1f dB", search.offsetHz / 1000, search.snrDB) }
+                FileHandle.standardError.write(Data((text + "\n").utf8))
+            }
+        }
+    }
     func process(audio: [Float]) { for receiver in receivers { print(receiver.process(audio: audio)) } }
 
     private func print(_ outputs: [SondeOutput]) {
