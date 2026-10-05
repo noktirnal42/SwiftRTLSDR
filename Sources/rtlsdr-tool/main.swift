@@ -33,6 +33,8 @@ usage:
   rtlsdr-tool sonde --scan [--from 400e6 --to 406e6] [--dwell 3] [--threshold 8] [--json] [--verbose] [--gain 40.2]
   rtlsdr-tool lora --ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>] [--freq <Hz>] [--sf 11] [--bw 250000] [--cr 1]
                    [--sync 0x2B] [--preamble 16] [--ldro on|off] [--symbols]
+  rtlsdr-tool acars [--region us|eu | --freq 131.55,130.025,...] [--rate 2400000] [--json] [--gain auto|<dB>] [--seconds N]
+                    [--ifile FILE [--center <Hz>]] [--wav FILE (12.5 kHz AM audio, a channel each)]
   rtlsdr-tool mesh [--preset LongFast] [--region US] [--slot N | --freq <Hz>] [--primary NAME[:KEY]] [--channel NAME[:KEY]]...
                    [--ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>]] [--json] [--verbose] [--gain auto|<dB>] [--ppm 0] [--seconds N]
   rtlsdr-tool serve [--address 127.0.0.1] [--port 1234] [--rate 2048000] [--freq 100e6] [--gain auto|<dB>] [--allow-bias-tee] [--fast]
@@ -155,6 +157,8 @@ case "lora":
     lora(arguments)
 case "mesh":
     mesh(arguments)
+case "acars":
+    acars(arguments)
 
 default:
     print(usage)

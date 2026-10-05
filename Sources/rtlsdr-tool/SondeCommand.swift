@@ -7,7 +7,12 @@ import RTLSDRScan
 /// A mono channel of a PCM WAV file (8-bit unsigned, 16-bit signed or 32-bit float; the first channel if several).
 struct WAVFile {
     let sampleRate: Double
-    let samples: [Float]
+    /// Each channel's samples (acarsdec's test recording has one ACARS channel in each of four).
+    let channels: [[Float]]
+    /// The first channel.
+    var samples: [Float] { channels[0] }
+    /// What a full-scale sample reads (32768 for 16-bit files, 1 for float).
+    let fullScale: Float
 
     init(path: String) throws {
         struct Invalid: Error, CustomStringConvertible { let description: String }
@@ -17,37 +22,43 @@ struct WAVFile {
         guard data.count >= 12, data[0..<4].elementsEqual("RIFF".utf8), data[8..<12].elementsEqual("WAVE".utf8) else {
             throw Invalid(description: "\(path) is not a WAV file")
         }
-        var format = 0, channels = 0, rate = 0, bits = 0
+        var format = 0, channelCount = 0, rate = 0, bits = 0
         var position = 12
-        var samples: [Float]?
+        var decoded: [[Float]]?
         while position + 8 <= data.count {
             let size = u32(position + 4), body = position + 8
             let end = min(data.count, body + size)
             if data[position..<(position + 4)].elementsEqual("fmt ".utf8), size >= 16 {
-                format = u16(body); channels = u16(body + 2); rate = u32(body + 4); bits = u16(body + 14)
+                format = u16(body); channelCount = u16(body + 2); rate = u32(body + 4); bits = u16(body + 14)
+                // WAVE_FORMAT_EXTENSIBLE (multichannel files): the format code opens the sub-format GUID.
+                if format == 0xfffe && size >= 40 { format = u16(body + 24) }
             } else if data[position..<(position + 4)].elementsEqual("data".utf8) {
-                guard channels > 0, [1, 3].contains(format) else { throw Invalid(description: "\(path): only PCM or float WAV files") }
-                let width = bits / 8, frame = width * channels
+                guard channelCount > 0, [1, 3].contains(format) else { throw Invalid(description: "\(path): only PCM or float WAV files") }
+                let width = bits / 8, frame = width * channelCount
                 guard [1, 2, 4].contains(width), !(format == 3 && width != 4) else { throw Invalid(description: "\(path): \(bits)-bit samples are not supported") }
-                var out: [Float] = []
-                out.reserveCapacity((end - body) / frame)
+                var out = [[Float]](repeating: [], count: channelCount)
+                for c in 0..<channelCount { out[c].reserveCapacity((end - body) / frame) }
                 var at = body
                 while at + frame <= end {
-                    switch (format, width) {
-                    case (_, 1): out.append(Float(Int(data[at]) - 128))
-                    case (_, 2): out.append(Float(Int16(bitPattern: UInt16(u16(at)))))
-                    case (3, _): out.append(Float(bitPattern: UInt32(u32(at))))
-                    default: out.append(Float(Int32(bitPattern: UInt32(u32(at)))) / 65_536)
+                    for c in 0..<channelCount {
+                        let p = at + c * width
+                        switch (format, width) {
+                        case (_, 1): out[c].append(Float(Int(data[p]) - 128))
+                        case (_, 2): out[c].append(Float(Int16(bitPattern: UInt16(u16(p)))))
+                        case (3, _): out[c].append(Float(bitPattern: UInt32(u32(p))))
+                        default: out[c].append(Float(Int32(bitPattern: UInt32(u32(p)))) / 65_536)
+                        }
                     }
                     at += frame
                 }
-                samples = out
+                decoded = out
             }
             position = body + size + (size & 1)
         }
-        guard let samples, rate > 0 else { throw Invalid(description: "\(path) has no audio") }
+        guard let decoded, rate > 0 else { throw Invalid(description: "\(path) has no audio") }
         sampleRate = Double(rate)
-        self.samples = samples
+        channels = decoded
+        fullScale = format == 3 ? 1 : bits == 8 ? 128 : bits == 32 ? 32_768 : 32_768
     }
 }
 
