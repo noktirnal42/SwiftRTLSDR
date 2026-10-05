@@ -16,6 +16,11 @@ struct Arguments {
         return words[index + 1]
     }
 
+    /// Every value of an option that may be given more than once.
+    func options(_ name: String) -> [String] {
+        words.indices.filter { words[$0] == "--\(name)" && $0 + 1 < words.count }.map { words[$0 + 1] }
+    }
+
     func flag(_ name: String) -> Bool { words.contains("--\(name)") }
 
     /// The first word that is neither an option name nor an option's value.

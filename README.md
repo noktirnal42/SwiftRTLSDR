@@ -100,8 +100,10 @@ rendered to PNG, METAR/TAF/winds-aloft text; 433/868/915 MHz sensors the way rtl
 stations, thermometers, remotes: AcuRite, Oregon Scientific, LaCrosse, Fine Offset/Ecowitt, Bresser and others); and
 Meteor-M weather-satellite images on 137 MHz (LRPT, QPSK and offset QPSK), with a live dashboard in the browser; and
 Vaisala RS41 radiosondes on 400-406 MHz (position, altitude, velocity, temperature), found by scanning or on a given
-frequency. `rtlsdr-tool adsb`, `uat`, `ism`, `meteor` and `sonde` run them live or on recorded I/Q, with output
-compatible with dump1090, dump978, rtl_433, meteor_decode and rs41mod. How they were checked, and against what: [docs/DECODERS.md](docs/DECODERS.md).
+frequency; and Meshtastic mesh traffic on LoRa (text messages, positions, node info, telemetry; the default channel and
+any channel whose key you have), on the frequency Meshtastic picks for the preset and region. `rtlsdr-tool adsb`, `uat`,
+`ism`, `meteor`, `sonde` and `mesh` run them live or on recorded I/Q, with output compatible with dump1090, dump978,
+rtl_433, meteor_decode and rs41mod. How they were checked, and against what: [docs/DECODERS.md](docs/DECODERS.md).
 
 ```swift
 import RTLSDRDecoders
@@ -127,6 +129,11 @@ let picture = lrpt.imager.composite()?.png                            // RGB fro
 
 let sonde = RS41Receiver(sampleRate: 240_000, offsetHz: 40_000)        // an RS41 40 kHz above the tuned frequency
 for event in sonde.process(iq: block) { print(event.report?.json() ?? "") }   // {"type": "RS41", "frame": 3172, ...}
+
+let preset = MeshtasticPreset.longFast                                 // US: 906.875 MHz, 1 MS/s, channel at +250 kHz
+let lora = LoRaReceiver(parameters: preset.parameters, sampleRate: 1_000_000, offsetHz: 250_000, centerFrequencyHz: 906.875e6)
+let mesh = MeshtasticDecoder(channels: [.primary(preset)])
+for frame in lora.process(iq: block) { print(mesh.decode(frame.payload)?.line ?? "") }   // !a1b2c3d4 → ^all ... TEXT "hi"
 ```
 
 ### Command-line tool
@@ -147,6 +154,7 @@ swift run -c release rtlsdr-tool uat --nexrad radar/                  # 978 MHz:
 swift run -c release rtlsdr-tool ism --json                           # 433.92 MHz sensors, rtl_433's JSON
 swift run -c release rtlsdr-tool meteor --web 8080 --out pass/        # Meteor-M images, live at localhost:8080
 swift run -c release rtlsdr-tool sonde --scan --json                  # radiosondes on 400-406 MHz
+swift run -c release rtlsdr-tool mesh --region EU_868                 # Meshtastic LongFast on 869.525 MHz
 ```
 
 Use a release build for the decoders: a debug build decodes ADS-B at about half real speed (it then drops blocks and
@@ -192,7 +200,7 @@ antenna, the bias tee on a dongle that has one, any other dongle model or tuner 
 other than 27, hot-plug, and using several dongles at once. Retuning takes about 27 ms, which limits scan speed.
 
 Also not verified on hardware: everything added on 2026-09-30 (retune shortcuts, overload guard / host AGC, scanning,
-EEPROM writing and serial provisioning, the `rtl_tcp` server, the ADS-B, UAT, ISM, Meteor-M and RS41 decoders). It was built and tested on
+EEPROM writing and serial provisioning, the `rtl_tcp` server, the ADS-B, UAT, ISM, Meteor-M, RS41 and Meshtastic decoders). It was built and tested on
 Linux only; the macOS build of those parts has not been compiled yet.
 
 ## Requirements

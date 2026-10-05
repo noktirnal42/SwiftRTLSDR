@@ -6,13 +6,13 @@ nothing (not even RTLSDRKit): feed it u8 I/Q from the dongle, from a file, or fr
 published messages and recordings made with other receivers. The on-air checks are listed in
 [HARDWARE.md](../HARDWARE.md).
 
-| | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT | Radiosondes |
-|---|---|---|---|---|---|
-| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) | 400-406 MHz, 240 kS/s (any rate from 48 kS/s), or FM audio |
-| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41 weather balloons: position, altitude, velocity, temperature, serial, battery, burst-kill countdown |
-| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame format as rs1729's RS project documents it (GPL-3.0, read for format facts only); its rs41mod as oracle |
-| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--web PORT]` | `rtlsdr-tool sonde [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` |
-| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod `--json` (the JSON lines radiosonde_auto_rx reads) |
+| | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT | Radiosondes | Meshtastic (LoRa) |
+|---|---|---|---|---|---|---|
+| Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) | 400-406 MHz, 240 kS/s (any rate from 48 kS/s), or FM audio | The slot Meshtastic picks for the preset and channel (US LongFast: 906.875 MHz), 1 MS/s (any multiple of the LoRa bandwidth) |
+| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41 weather balloons: position, altitude, velocity, temperature, serial, battery, burst-kill countdown | Meshtastic mesh traffic on the default channel and any channel whose key is given: text messages, positions, node info, telemetry, traceroutes, neighbour lists, acknowledgements; any LoRa frame with an explicit header |
+| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame format as rs1729's RS project documents it (GPL-3.0, read for format facts only); its rs41mod as oracle | Written for this package: LoRa coding from the format as gr-lora_sdr implements it, Meshtastic from its firmware and protobuf definitions (all GPL-3.0, read for format facts only); gr-lora_sdr as oracle |
+| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--web PORT]` | `rtlsdr-tool sonde [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` | `rtlsdr-tool mesh [--preset LongFast] [--region US] [--channel NAME:KEY] [--ifile FILE] [--json]`; `rtlsdr-tool lora --ifile FILE` for plain LoRa |
+| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod `--json` (the JSON lines radiosonde_auto_rx reads) | One line, or one JSON object, a packet; field names follow Meshtastic's protobufs |
 
 ## How they were checked
 
@@ -238,18 +238,96 @@ How it was checked:
   …), uploading to SondeHub, and following one sonde continuously once `--scan` has found it (the scan loop revisits
   every sonde each round, a position every 15 s or so).
 
+### Meshtastic (LoRa)
+
+Meshtastic nodes talk LoRa: chirps that sweep the bandwidth, each starting at one of 2^SF offsets, behind a preamble of
+16 up-chirps, a two-symbol sync word (0x2B) and 2.25 down-chirps. Two layers, both written for this package:
+
+* **LoRa coding** (`LoRaCoding`), from the format as gr-lora_sdr (EPFL TCL, GPL-3.0) implements it, read for facts only:
+  whitening, the explicit header with its checksum, the payload CRC, Hamming codes 4/5 to 4/8, the diagonal
+  interleaver, Gray mapping, and the low data rate rules (the header block always at SF−2 bits a symbol, the payload
+  too when a symbol lasts 16 ms or more). The decoder takes the nearest codeword, so 4/7 and 4/8 correct a bit.
+* **Receiver** (`LoRaReceiver`, new). A low-pass with its edges at ±0.7 bandwidths; every `oversampling`-th sample
+  then makes a chirp, at a phase chosen to the sample. A preamble is four or more windows in a row peaking at the same
+  bin after dechirping. The fractional carrier offset is the peak's phase advance from one chirp to the next (corrected
+  by π(N−1)/N where the clock drift moves the peak a bin); up-chirps peak at offset + timing and the delimiter's
+  down-chirps at offset − timing, which separates the two (with the drift between the two measurements taken out), and
+  the timing is refined to the sample. The sync word must then be where it belongs. Told the RF frequency, the receiver
+  spaces the symbols by the clock error the carrier offset implies (a transmitter's crystal is off by the same ppm in
+  both), so a 20 ppm crystal costs nothing over a 230-byte frame. Offsets up to a quarter of the bandwidth are found
+  (LongFast frames 30, 45, −50 and +58 kHz off all decoded at −10 dB).
+* **Meshtastic** (`Meshtastic`, `MeshtasticDecoder`), from the firmware and protobuf definitions (GPL-3.0, facts only):
+  the 16-byte header (destination, sender, packet id, hop limit and start, want-ack, MQTT, channel hash, next hop,
+  relay), channel keys (the one-byte shorthand, the well-known default key, AES-128 or AES-256), the hash that names
+  the channel (XOR of name and key), AES in counter mode with the nonce built from packet id and sender, the `Data`
+  message and the applications' messages (text, position, user, device and environment telemetry, routing,
+  traceroute, neighbour info, waypoint). A packet whose hash matches no known channel, or whose key gives no valid
+  message, is reported as unreadable; so is a direct message encrypted to its recipient's public key, which no
+  listener can read. AES (FIPS-197) and the protobuf wire format are this package's own.
+* **Where to listen.** The presets (ShortTurbo … LongSlow, the Lite and Narrow ones) and the regional band plans (US,
+  EU_433, EU_868, ANZ, … 26 sub-GHz regions), and the slot rule: the band is cut into slots one bandwidth wide and the
+  primary channel's name, hashed with djb2, picks one (US LongFast: slot 20 of 104, 906.875 MHz; EU_868: 869.525 MHz).
+  `--slot`, `--freq` and `--primary NAME:KEY` override it. Live, the dongle runs at 1 MS/s (2 MS/s for 500 kHz
+  presets, 250 kS/s for 62.5 kHz) with the channel one bandwidth above the tuned frequency, clear of the DC spike.
+
+How it was checked:
+
+* **Coding against gr-lora_sdr's transmitter**: 36 random payloads over SF7-12, every coding rate, low data rate on and
+  off, lengths 2 to 255 (`Tools/generate-lora-vectors.py`); every symbol matches, and every frame decodes back with
+  its CRC.
+* **Receiver against gr-lora_sdr's receiver** on signals from gr-lora_sdr's transmitter (`Tools/lora-oracle.py`), a
+  transmitter crystal off by the ppm shown (GNU Radio's channel model moves carrier and clock together), noise for the
+  SNR in the LoRa bandwidth, 1 MS/s. This receiver reads the u8 file a dongle would give and is told the frequency;
+  gr-lora_sdr reads the complex floats and is told the same frequency, with hard and with soft decisions
+  (`Tools/lora-oracle-compare.py`). Frames with a valid CRC and the payload sent:
+
+  | LongFast (SF11, 250 kHz, 4/5), +10 ppm, 20 frames | −8 dB | −10 | −12 | −14 | −16 | −18 | −20 | −21 |
+  |---|---|---|---|---|---|---|---|---|
+  | this receiver | 20 | 20 | 20 | 20 | 20 | 18 | 3 | 0 |
+  | gr-lora_sdr, hard / soft | 20 / 20 | 20 / 20 | 19 / 19 | 3 / 5 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+
+  | ShortFast (SF7, 250 kHz, 4/5), +10 ppm, 20 frames | −2 dB | −4 | −6 | −8 | −10 |
+  |---|---|---|---|---|---|
+  | this receiver | 20 | 20 | 19 | 7 | 0 |
+  | gr-lora_sdr, hard / soft | 14 / 15 | 2 / 3 | 0 / 0 | 0 / 0 | 0 / 0 |
+
+  | LongSlow (SF12, 125 kHz, 4/8, low data rate), +20 ppm, 10 frames | −14 dB | −17 | −20 | −22 |
+  |---|---|---|---|---|
+  | this receiver | 10 | 10 | 10 | 8 |
+  | gr-lora_sdr, hard / soft | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+
+  Without clock error (LongFast, 0 ppm) the picture is the same: 20, 20, 20 at −12, −14, −16 dB against gr-lora_sdr's
+  16, 0, 0. gr-lora_sdr decodes all of these signals at higher SNR (the LongSlow ones at 0 dB), so its losses are in
+  its synchronisation, not in the signals. This receiver stops close to the demodulation limits Semtech gives for its
+  own chips (−7.5 dB at SF7, −17.5 dB at SF11, −20 dB at SF12). No frame decoded with a wrong payload.
+  Before the comparison found it, frames were lost at ±20 ppm: a preamble window measured twice (once before waiting
+  for more samples, once after) put a zero phase step into the carrier estimate.
+* **Meshtastic packets** built by `Tools/meshtastic-vectors.py` (the protobuf written out by hand, OpenSSL's AES):
+  text, position, node info, device and environment telemetry, traceroute, neighbour info, an acknowledgement, a
+  private channel with an AES-256 key, a public-key direct message and a channel without a key here; every field
+  decodes as built. Sent as LongFast frames by gr-lora_sdr at −12 dB and +20 ppm, all 11 come out of
+  `rtlsdr-tool mesh --ifile` the same way.
+* **Unit tests**: AES against FIPS-197's examples, counter mode against SP 800-38A's; the protobuf reader on every wire
+  type and on broken messages; the default channel's hash (8), key expansion, the US, EU_868 and EU_433 LongFast
+  frequencies; the packets above; and the receiver on frames from an ideal chirp modulator written in the test
+  (ShortFast, 15 ppm fast, 0 dB, fed in odd-sized blocks), and on noise alone.
+* **Not done:** implicit-header LoRa (Meshtastic doesn't use it), AES-CCM channels (an opt-in in development
+  firmware), decoding the payloads of the less common applications (they are shown as bytes), and listening to more
+  than one slot or preset at once.
+
 ## Speed
 
 Decoding the oracle recordings on one core of the Linux build machine: ADS-B 2.4 s of signal in 0.29 s (release build)
 or 4.5 s (debug build); UAT 1.17 s of signal in 0.04 s (release) or 0.84 s (debug); ISM 122 s of signal in 0.74 s
 (release; rtl_433 takes 0.44 s); Meteor-M LRPT 36 s of I/Q in 1.8 s (release, to images; meteor_demod's
-demodulation alone takes 0.74 s) or 35 s of soft symbols in 0.5 s; RS41 120 s of I/Q at 240 kS/s in 1.2 s, or of FM audio in 0.4 s. Live, a decoder
+demodulation alone takes 0.74 s) or 35 s of soft symbols in 0.5 s; RS41 120 s of I/Q at 240 kS/s in 1.2 s, or of FM audio in 0.4 s. LoRa LongFast 7 s of I/Q at 1 MS/s in 0.85 s (8× real time; SF7 9×). Live, a decoder
 that falls behind
 drops whole blocks and reports it rather than queueing without limit, so use a release build for ADS-B.
 
 ## Rerunning the comparisons
 
-The oracles need dump1090-mutability, dump978, rtl_433, meteor_demod, SatDump, rs41mod and a few Python packages; none of
+The oracles need dump1090-mutability, dump978, rtl_433, meteor_demod, SatDump, rs41mod, GNU Radio 3.10 with gr-lora_sdr
+and a few Python packages; none of
 that is needed for `swift test`.
 
 ```
@@ -278,4 +356,12 @@ Tools/sonde-oracle-compare.py RS/demod/mod/rs41mod rtlsdr-tool RS/rs41/wav/*.wav
 RS/demod/mod/rs41mod -i --ecc2 -r RS/rs41/wav/20140717_402MHz.wav > frames.txt              # dewhitened frames
 Tools/rs41-oracle.py frames.txt sonde --ebn0 9 --offset 3000                              # numpy
 rtlsdr-tool sonde --ifile sonde.u8 --json; RS/demod/mod/rs41mod --IQ 0.0125 --lpIQ --ecc2 --json sonde.wav
+
+git clone https://github.com/tapparelj/gr-lora_sdr                                        # GNU Radio 3.10 module (862746d)
+Tools/generate-lora-vectors.py Tests/RTLSDRDecodersTests/Resources/lora-symbol-vectors.txt
+Tools/lora-oracle-compare.py rtlsdr-tool payloads.txt /tmp/lora --snr=-8,-10,-12,-14,-16,-18,-20,-21 --ppm 10
+Tools/lora-oracle-compare.py rtlsdr-tool payloads.txt /tmp/ls --sf 12 --bw 125000 --cr 4 --ppm 20 --snr=-14,-17,-20,-22
+Tools/meshtastic-vectors.py Tests/RTLSDRDecodersTests/Resources/meshtastic-packets.txt     # openssl
+awk '!/^#/{print $4}' Tests/RTLSDRDecodersTests/Resources/meshtastic-packets.txt > mesh.txt
+Tools/lora-oracle.py tx mesh.txt mesh --ppm 20 --snr -12 && rtlsdr-tool mesh --ifile mesh.u8 --channel Secret:AwoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dw=
 ```
