@@ -12,6 +12,7 @@ func scan(_ arguments: Arguments) {
         let device = try arguments.openDevice()
         defer { device.close() }
         try device.setSampleRate(arguments.int("rate", default: 2_400_000))
+        try arguments.applyFrequencyCorrection(to: device)
         try arguments.applyGain(to: device, default: "29.7")      // a fixed gain keeps hops comparable
         try arguments.applyRetuneShortcuts(to: device)
 

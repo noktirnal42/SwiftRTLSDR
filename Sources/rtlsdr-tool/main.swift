@@ -17,9 +17,27 @@ usage:
                    [--sweeps 1] [--no-cover] [--fast] [--csv FILE]
   rtlsdr-tool eeprom [--out FILE]
   rtlsdr-tool set-serial <serial> [--write] [--backup FILE]
+  rtlsdr-tool calibrate --freq <known carrier Hz> | --atsc CHANNEL [--seconds 10] [--rate 1024000] [--search 150] [--write [--label TEXT]]
+  rtlsdr-tool calibrate --show | --set-ppm N [--label TEXT] [--write] | --clear [--write]
+  rtlsdr-tool hline [--freq 1420.405751768e6] [--rate 2400000] [--fft 1024] [--reference 2.5e6] [--switch 1] [--seconds 600]
+                    [--smooth 1] [--csv hline.csv] [--lat D --lon D (--ra H --dec D | --az D --el D)] [--gain 40.2]
+                    [--ifile SIGNAL.u8 --reference-file REF.u8]
+  rtlsdr-tool adsb [--ifile FILE] [--raw] [--gain 49.6|auto] [--lat <deg> --lon <deg>] [--seconds N]
+  rtlsdr-tool uat [--ifile FILE | --frames FILE] [--raw] [--nexrad DIR] [--gain 49.6|auto] [--seconds N]
+  rtlsdr-tool ism [--ifile FILE] [--freq 433.92e6] [--rate 250000] [--json] [--protocols 2,12,...] [--fsk classic|minmax]
+                  [--analyze] [--codes] [--list-protocols] [--gain auto|<dB>] [--seconds N]
+  rtlsdr-tool ism --code '[19]{36}b5a8f0470' [--json]
+  rtlsdr-tool meteor [--soft FILE | --ifile FILE] [--rate 288000] [--freq 137.9e6] [--mode oqpsk|qpsk] [--symbol-rate 72000|80000] [--out DIR]
+                     [--web PORT [--host 127.0.0.1] [--speed 1]] [--cadu FILE] [--write-soft FILE] [--gain 40.2] [--seconds N]
+  rtlsdr-tool sonde [--wav FILE | --ifile FILE [--rate 240000] [--offset <Hz>] | --freq <Hz>] [--json] [--verbose] [--gain auto|<dB>] [--seconds N]
+  rtlsdr-tool sonde --scan [--from 400e6 --to 406e6] [--dwell 3] [--threshold 8] [--json] [--verbose] [--gain 40.2]
+  rtlsdr-tool lora --ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>] [--freq <Hz>] [--sf 11] [--bw 250000] [--cr 1]
+                   [--sync 0x2B] [--preamble 16] [--ldro on|off] [--symbols]
+  rtlsdr-tool mesh [--preset LongFast] [--region US] [--slot N | --freq <Hz>] [--primary NAME[:KEY]] [--channel NAME[:KEY]]...
+                   [--ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>]] [--json] [--verbose] [--gain auto|<dB>] [--ppm 0] [--seconds N]
   rtlsdr-tool serve [--address 127.0.0.1] [--port 1234] [--rate 2048000] [--freq 100e6] [--gain auto|<dB>] [--allow-bias-tee] [--fast]
 
-  every command: [--device <index> | --serial <serial>]
+  every command: [--device <index> | --serial <serial>]; those that tune: [--ppm N | --ppm eeprom]
 """
 
 let allArguments = Array(CommandLine.arguments.dropFirst())
@@ -43,12 +61,11 @@ case "capture":
     let freq = arguments.double("freq", default: 0)
     let rate = arguments.int("rate", default: 2_048_000)
     let seconds = arguments.double("seconds", default: 2)
-    let ppm = arguments.int("ppm", default: 0)
     do {
         let device = try arguments.openDevice()
         defer { device.close() }
         print("Opened \(device.info?.name ?? "device") with \(device.tuner.rawValue) tuner")
-        try device.setFrequencyCorrection(ppm: ppm)
+        try arguments.applyFrequencyCorrection(to: device)
         let actualRate = try device.setSampleRate(rate)
         try device.setCenterFrequency(Int(freq))
         try arguments.applyGain(to: device)
@@ -112,8 +129,32 @@ case "eeprom":
 case "set-serial":
     setSerial(arguments)
 
+case "calibrate":
+    calibrate(arguments)
+
+case "hline":
+    hydrogenLine(arguments)
+
 case "serve":
     serve(arguments)
+
+case "adsb":
+    adsb(arguments)
+
+case "uat":
+    uat(arguments)
+
+case "ism":
+    ism(arguments)
+
+case "meteor":
+    meteor(arguments)
+case "sonde":
+    sonde(arguments)
+case "lora":
+    lora(arguments)
+case "mesh":
+    mesh(arguments)
 
 default:
     print(usage)

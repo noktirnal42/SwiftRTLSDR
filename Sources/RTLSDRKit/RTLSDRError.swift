@@ -18,6 +18,7 @@ public enum RTLSDRError: Error, LocalizedError, Equatable, Sendable {
     case eepromHeaderProtected(offset: Int)
     case eepromVerifyFailed(offsets: [Int])
     case invalidSerial(String)
+    case calibrationRecord(String)
 
     public var errorDescription: String? {
         switch self {
@@ -53,6 +54,8 @@ public enum RTLSDRError: Error, LocalizedError, Equatable, Sendable {
             return "The EEPROM did not read back as written at offsets \(offsets.map { String(format: "0x%02x", $0) }.joined(separator: ", ")). Restore from the backup."
         case let .invalidSerial(reason):
             return "Invalid serial number: \(reason)."
+        case let .calibrationRecord(reason):
+            return "Calibration record: \(reason)."
         }
     }
 
