@@ -154,163 +154,47 @@ public struct RS41Event: Sendable {
 
 /// Receives RS41 radiosondes from u8 I/Q (tuned near the sonde) or from FM audio.
 ///
-/// The I/Q path: an oscillator moves the sonde to zero, a boxcar decimates to about 48 kHz, a ±3.7 kHz low-pass (the
-/// bandwidth rs41mod uses on real sondes) keeps the signal (about ±2.4 kHz deviation) and little noise, and a discriminator gives the frequency that `RS41FrameSync`
-/// reads. A filter that narrow needs the carrier found first (a dongle's crystal alone can be 20 kHz off at 403 MHz),
-/// so the decimated samples' spectrum is also averaged over half a second and the listening frequency moved to the
-/// centre of the power standing above the noise; once frames arrive, each header found fine-tunes it.
+/// The I/Q path is an `FMFrontEnd` with a ±3.7 kHz channel (the bandwidth rs41mod uses on real sondes: about ±2.4 kHz
+/// deviation and little noise) giving the frequency that `RS41FrameSync` reads; once frames arrive, each header found
+/// fine-tunes the listening frequency.
 public final class RS41Receiver {
     /// Keeps each sonde's calibration; share one between receivers (dwells on the same sonde) to keep filling it.
     public let decoder: RS41Decoder
     private let sync: RS41FrameSync
-    private let inputRate: Double
-    private let iq: Bool
-    // I/Q front end: oscillator, decimation by `decimation` (boxcar, then a low-pass FIR), discriminator.
-    private var offsetHz: Double
-    private var oscillator = (1.0, 0.0)            // e^(−2πi·offset·t), advanced by a rotation each sample
-    private var rotations = 0
-    private let decimation: Int
-    private var sumI = 0.0, sumQ = 0.0, summed = 0
-    private let taps: [Double]
-    private var historyI: [Double], historyQ: [Double], historyIndex = 0
-    private var previous = (0.0, 0.0)
-    private let audioRate: Double
-    // Carrier search: power spectra of the decimated samples, averaged.
-    private static let searchSize = 1024, searchAverages = 24
-    private let fft = RadixTwoFFT(size: searchSize)
-    private var searchReal = [Double](repeating: 0, count: searchSize), searchImaginary = [Double](repeating: 0, count: searchSize)
-    private var searchPower = [Double](repeating: 0, count: searchSize)
-    private var searchFilled = 0, searchTransforms = 0
-    private var samplesSinceGoodFrame = Int.max / 2
-    /// The last carrier search: offset from where the receiver was listening (hertz) and how far the signal stood
-    /// above the noise (dB); nil until the first half second.
-    public private(set) var lastSearch: (offsetHz: Double, snrDB: Double)?
+    private let front: FMFrontEnd?
 
     /// I/Q input at `sampleRate`, the sonde `offsetHz` above the tuned frequency.
     public init(sampleRate: Double, offsetHz: Double = 0, channelCutoffHz: Double = 3_700, decoder: RS41Decoder = RS41Decoder()) {
         self.decoder = decoder
-        inputRate = sampleRate
-        iq = true
-        self.offsetHz = offsetHz
-        decimation = max(1, Int((sampleRate / 48_000).rounded()))
-        audioRate = sampleRate / Double(decimation)
-        let count = 49, cutoff = channelCutoffHz / audioRate
-        taps = (0..<count).map { n in
-            let t = Double(n - count / 2)
-            let sinc = t == 0 ? 2 * cutoff : sin(2 * .pi * cutoff * t) / (.pi * t)
-            return sinc * (0.54 - 0.46 * cos(2 * .pi * Double(n) / Double(count - 1)))
-        }
-        historyI = [Double](repeating: 0, count: count)
-        historyQ = [Double](repeating: 0, count: count)
-        sync = RS41FrameSync(sampleRate: audioRate)
+        let front = FMFrontEnd(sampleRate: sampleRate, offsetHz: offsetHz, channelCutoffHz: channelCutoffHz)
+        self.front = front
+        sync = RS41FrameSync(sampleRate: front.audioRate)
     }
 
     /// FM-demodulated audio at `audioRate` (a WAV from a scanner or SDR program).
     public init(audioRate: Double, decoder: RS41Decoder = RS41Decoder()) {
         self.decoder = decoder
-        inputRate = audioRate
-        iq = false
-        offsetHz = 0
-        decimation = 1
-        self.audioRate = audioRate
-        taps = []
-        historyI = []
-        historyQ = []
+        front = nil
         sync = RS41FrameSync(sampleRate: audioRate)
     }
 
     /// Where the receiver is listening, relative to the tuned frequency (it follows the sonde's drift).
-    public var listeningOffsetHz: Double { offsetHz }
+    public var listeningOffsetHz: Double { front?.listeningOffsetHz ?? 0 }
+
+    /// The last carrier search: offset from where the receiver was listening (hertz) and how far the signal stood
+    /// above the noise (dB); nil until the first half second.
+    public var lastSearch: (offsetHz: Double, snrDB: Double)? { front?.lastSearch }
 
     /// Headers found whose frames had nothing intact.
     public var rejectedHeaders: Int { sync.rejected }
 
     public func process(iq block: [UInt8]) -> [RS41Event] {
-        precondition(iq, "this receiver was made for audio")
-        var audio: [Float] = []
-        audio.reserveCapacity(block.count / 2 / decimation + 1)
-        let step = -2 * Double.pi * offsetHz / inputRate
-        let rotation = (cos(step), sin(step))
-        var index = 0
-        while index + 1 < block.count {
-            let i = Double(block[index]) - 127.5, q = Double(block[index + 1]) - 127.5
-            index += 2
-            let (c, s) = oscillator
-            sumI += i * c - q * s
-            sumQ += i * s + q * c
-            oscillator = (c * rotation.0 - s * rotation.1, c * rotation.1 + s * rotation.0)
-            rotations += 1
-            if rotations == 4096 {                      // keep it on the unit circle
-                let norm = (oscillator.0 * oscillator.0 + oscillator.1 * oscillator.1).squareRoot()
-                oscillator = (oscillator.0 / norm, oscillator.1 / norm)
-                rotations = 0
-            }
-            summed += 1
-            guard summed == decimation else { continue }
-            search(sumI, sumQ)
-            historyI[historyIndex] = sumI
-            historyQ[historyIndex] = sumQ
-            sumI = 0; sumQ = 0; summed = 0
-            var fi = 0.0, fq = 0.0, h = historyIndex
-            for tap in taps {
-                fi += tap * historyI[h]; fq += tap * historyQ[h]
-                h = h == 0 ? taps.count - 1 : h - 1
-            }
-            historyIndex = (historyIndex + 1) % taps.count
-            // Frequency, in hertz: the phase step between filtered samples.
-            let angle = atan2(fq * previous.0 - fi * previous.1, fi * previous.0 + fq * previous.1)
-            previous = (fi, fq)
-            audio.append(Float(angle * audioRate / (2 * .pi)))
-        }
-        return handle(sync.process(audio))
-    }
-
-    /// Adds a decimated sample to the carrier search; every half second, moves the listening frequency to the signal if
-    /// no frame has decoded for a while.
-    private func search(_ i: Double, _ q: Double) {
-        let n = Self.searchSize
-        let window = 0.5 - 0.5 * cos(2 * Double.pi * Double(searchFilled) / Double(n))
-        searchReal[searchFilled] = i * window
-        searchImaginary[searchFilled] = q * window
-        searchFilled += 1
-        samplesSinceGoodFrame += 1
-        guard searchFilled == n else { return }
-        searchFilled = 0
-        fft.forward(real: &searchReal, imaginary: &searchImaginary)
-        for k in 0..<n { searchPower[k] += searchReal[k] * searchReal[k] + searchImaginary[k] * searchImaginary[k] }
-        searchTransforms += 1
-        guard searchTransforms == Self.searchAverages else { return }
-        defer { for k in 0..<n { searchPower[k] = 0 }; searchTransforms = 0 }
-
-        // Bins within ±20 kHz (the boxcar's useful band), in frequency order, smoothed over five bins.
-        let binHz = audioRate / Double(n)
-        let reach = min(n / 2 - 3, Int(20_000 / binHz))
-        let bins = Array(-reach...reach)
-        let power: [Double] = bins.map { k in
-            var sum = 0.0
-            for d in -2...2 { sum += searchPower[((k + d) % n + n) % n] }
-            return sum / 5
-        }
-        let floor = power.sorted()[power.count / 2]
-        guard floor > 0, let peak = power.indices.max(by: { power[$0] < power[$1] }) else { return }
-        let snr = 10 * log10(power[peak] / floor)
-        // The centre of the power above the noise within ±7 kHz of the peak (the two lobes of the FSK spectrum).
-        var weight = 0.0, moment = 0.0
-        let span = Int(7_000 / binHz)
-        for index in max(0, peak - span)...min(power.count - 1, peak + span) where power[index] > 2 * floor {
-            weight += power[index] - floor
-            moment += (power[index] - floor) * Double(bins[index]) * binHz
-        }
-        guard weight > 0 else { return }
-        let centre = moment / weight
-        lastSearch = (centre, snr)
-        if snr >= 6 && abs(centre) > 300 && samplesSinceGoodFrame > Int(3 * audioRate) {
-            offsetHz = max(-inputRate / 2, min(inputRate / 2, offsetHz + centre))
-        }
+        guard let front else { preconditionFailure("this receiver was made for audio") }
+        return handle(sync.process(front.process(iq: block)))
     }
 
     public func process(audio: [Float]) -> [RS41Event] {
-        precondition(!iq, "this receiver was made for I/Q")
+        precondition(front == nil, "this receiver was made for I/Q")
         return handle(sync.process(audio))
     }
 
@@ -318,13 +202,13 @@ public final class RS41Receiver {
         found.map { item in
             let frame = item.frame
             var offset: Double?
-            if iq {
-                offset = offsetHz + item.mean
+            if let front {
+                offset = front.listeningOffsetHz + item.mean
                 // Follow the sonde: listen where the last clear header was.
-                if frame.corrected != nil || item.correlation >= 0.75 { offsetHz = max(-inputRate / 2, min(inputRate / 2, offset!)) }
-                if frame.corrected != nil { samplesSinceGoodFrame = 0 }
+                if frame.corrected != nil || item.correlation >= 0.75 { front.listen(at: offset!) }
+                if frame.corrected != nil { front.noteGoodFrame() }
             }
-            return RS41Event(frame: frame, report: decoder.report(frame), sampleIndex: item.sampleIndex * Double(decimation),
+            return RS41Event(frame: frame, report: decoder.report(frame), sampleIndex: item.sampleIndex * Double(front?.decimation ?? 1),
                              correlation: item.correlation, frequencyOffsetHz: offset)
         }
     }
