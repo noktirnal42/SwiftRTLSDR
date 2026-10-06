@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /// Reed-Solomon over GF(2^8), shortened to `length` symbols with `parityCount` parity symbols, primitive element 2
-/// and generator roots β^(firstRoot + i) with β = α^rootStep (UAT: step 1, first root 120; CCSDS, as Meteor-M LRPT
-/// uses it in the conventional basis: step 11, first root 112).
+/// and generator roots β^(firstRoot + i) with β = α^rootStep (UAT and VDL Mode 2: step 1, first root 120; CCSDS, as
+/// Meteor-M LRPT uses it in the conventional basis: step 11, first root 112).
 ///
-/// Written for this package: syndromes, Berlekamp-Massey, Chien search, Forney. It is checked against Phil Karn's
+/// Written for this package: syndromes, Berlekamp-Massey (with erasures), Chien search, Forney. It is checked against Phil Karn's
 /// decoder (the one dump978 uses) and against reedsolo's encoder. One deliberate difference: an error located in the
 /// part of the full-length code that shortening removed means the word is not within reach of any codeword, and is
 /// reported as uncorrectable (Karn's decoder ignores such a location and reports success).
@@ -79,8 +79,14 @@ public struct ReedSolomon: Sendable {
 
     /// Corrects `codeword` (`length` symbols, data then parity) in place. Returns the number of symbols corrected, or
     /// nil if the errors are beyond repair (the word is then left as it was).
-    public func correct(_ codeword: inout [UInt8]) -> Int? {
+    ///
+    /// `erasures` are positions known to be unreliable (VDL Mode 2's check octets that a short block does not send):
+    /// up to `parityCount` of them, and then e erasures and t errors are within reach while e + 2t ≤ `parityCount`.
+    /// `maximumErrors` refuses a repair that needs more than that many errors besides the erasures (so that some of the
+    /// code's power is left to tell a repair from a guess).
+    public func correct(_ codeword: inout [UInt8], erasures: [Int] = [], maximumErrors: Int? = nil) -> Int? {
         precondition(codeword.count == length, "expected \(length) symbols")
+        guard erasures.count <= parityCount else { return nil }
         // Syndromes: the received polynomial (first symbol = highest degree) at each generator root.
         var syndromes = [UInt8](repeating: 0, count: parityCount)
         var clean = true
@@ -93,36 +99,44 @@ public struct ReedSolomon: Sendable {
         }
         if clean { return 0 }
 
-        // Berlekamp-Massey: the shortest LFSR (error locator Λ, lowest degree first) that generates the syndromes.
+        // Berlekamp-Massey (error locator Λ, lowest degree first), started from the erasures' locator Π(1 + X x) so
+        // that it finds the shortest LFSR that has them among its roots.
         var locator: [UInt8] = [1]
-        var previous: [UInt8] = [1]
-        var errors = 0
+        for position in erasures {
+            let x = beta(length - 1 - position)
+            var next = locator + [0]
+            for (i, coefficient) in locator.enumerated() { next[i + 1] ^= mul(coefficient, x) }
+            locator = next
+        }
+        var previous = locator
+        var order = erasures.count
         var shift = 1
         var lastDiscrepancy: UInt8 = 1
-        for n in 0..<parityCount {
-            var discrepancy = syndromes[n]
-            for i in 1...max(1, errors) where i < locator.count { discrepancy ^= mul(locator[i], syndromes[n - i]) }
+        for n in erasures.count..<parityCount {
+            var discrepancy: UInt8 = 0
+            for i in 0..<min(locator.count, n + 1) { discrepancy ^= mul(locator[i], syndromes[n - i]) }
             if discrepancy == 0 {
                 shift += 1
                 continue
             }
             let scale = div(discrepancy, lastDiscrepancy)
-            var updated = locator
-            if updated.count < previous.count + shift { updated += [UInt8](repeating: 0, count: previous.count + shift - updated.count) }
-            for (i, coefficient) in previous.enumerated() { updated[i + shift] ^= mul(scale, coefficient) }
-            if 2 * errors <= n {
-                previous = locator
-                errors = n + 1 - errors
+            let lengthens = 2 * order <= n + erasures.count
+            let saved = lengthens ? locator : []
+            if locator.count < previous.count + shift { locator += [UInt8](repeating: 0, count: previous.count + shift - locator.count) }
+            for (i, coefficient) in previous.enumerated() { locator[i + shift] ^= mul(scale, coefficient) }
+            if lengthens {
+                previous = saved
+                order = n + 1 + erasures.count - order
                 lastDiscrepancy = discrepancy
                 shift = 1
             } else {
                 shift += 1
             }
-            locator = updated
         }
         while locator.count > 1 && locator.last == 0 { locator.removeLast() }
         let degree = locator.count - 1
-        guard degree == errors, degree > 0, 2 * degree <= parityCount else { return nil }
+        guard degree == order, degree > 0, 2 * degree - erasures.count <= parityCount,
+              degree - erasures.count <= maximumErrors ?? parityCount else { return nil }
 
         // Chien search over the positions that exist: symbol j sits at degree (length - 1 - j), locator X = α^degree,
         // and it is in error when Λ(X^-1) = 0 (X = β^degree).
@@ -141,6 +155,7 @@ public struct ReedSolomon: Sendable {
             for j in 0...min(i, degree) { evaluator[i] ^= mul(syndromes[i - j], locator[j]) }
         }
         var corrected = codeword
+        var changed = 0
         for j in positions {
             let power = length - 1 - j
             let inverse = beta(-power)
@@ -157,6 +172,7 @@ public struct ReedSolomon: Sendable {
             guard derivative != 0 else { return nil }
             let magnitude = mul(beta(power * (1 - firstRoot)), div(omega, derivative))
             corrected[j] ^= magnitude
+            if magnitude != 0 { changed += 1 }
         }
         // Belt and braces: the result must now be a codeword.
         for i in 0..<parityCount {
@@ -166,6 +182,6 @@ public struct ReedSolomon: Sendable {
             guard value == 0 else { return nil }
         }
         codeword = corrected
-        return degree
+        return changed
     }
 }
