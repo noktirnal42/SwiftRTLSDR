@@ -77,7 +77,8 @@ struct SwitchedSpectrometerTests {
         // Away from the line the bandpass divides out: flat to the noise of 512 transforms.
         let far = ratio.indices.filter { abs(offsets[$0] - 400_000) < 200_000 }
         #expect(far.allSatisfy { abs(ratio[$0]) < 0.15 })
-        #expect(spectrometer.integratedSeconds.signal == 4.0 * 128 * 256 / 2_400_000)
+        let expectedSeconds: Double = 4.0 * 128 * 256 / 2_400_000    // outside the macro: Swift 6.3 cannot type-check it inside
+        #expect(spectrometer.integratedSeconds.signal == expectedSeconds)
     }
 
     @Test func nothingBeforeBothPositionsHaveData() throws {
