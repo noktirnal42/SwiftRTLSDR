@@ -335,9 +335,16 @@ public struct MeshtasticData: Sendable {
                     switch value {
                     case .fixed32(let v): return [v]
                     case .bytes(let packed):                // packed repeated fixed32
-                        return stride(from: 0, to: packed.count - 3, by: 4).map { at in
-                            (0..<4).reduce(UInt32(0)) { $0 | UInt32(packed[at + $1]) << (8 * UInt32($1)) }
+                        // A plain loop: the one-line reduce was too much for the type checker in Swift 6.3.
+                        var words: [UInt32] = []
+                        var at = 0
+                        while at + 3 < packed.count {
+                            var word: UInt32 = 0
+                            for k in 0..<4 { word |= UInt32(packed[at + k]) << UInt32(8 * k) }
+                            words.append(word)
+                            at += 4
                         }
+                        return words
                     default: return []
                     }
                 }
