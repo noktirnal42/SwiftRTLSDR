@@ -296,8 +296,8 @@ project (dfm09mod, GPL-3.0, read for them only); the code is this package's:
 * **Reports.** A report needs packets 0, 1, 2, 3, 4 and 8 of one second, in the order sent and within six frames, with
   no codeword beyond repair (a block with more than four repaired codewords is not trusted either). One lost packet
   must not be made up with the same one from the second before, which a six-frame limit alone lets through when the
-  frames' timing puts the old packet just inside it (dfm09mod's rule is that limit; it printed a wrong height at 7 dB in
-  these comparisons, and this decoder did before it had the rule). Two things stand in for the CRC: the frame counter minus the time's seconds
+  frames' timing puts the old packet just inside it (dfm09mod's rule is that limit; it printed a wrong height at 7 dB in one
+  comparison run of a 60 s signal, and so did this decoder before it had the rule). Two things stand in for the CRC: the frame counter minus the time's seconds
   (mod 256) must stay what it was (two reports in a row that disagree move the reference), and the numbers must be
   plausible. The serial number comes from the channel that carries it once its two halves have come round twice alike;
   its channel number says the model (6 DFM-06, A DFM-09, B and C DFM-17 or DFM-09P, D DFM-17P). The temperature comes
@@ -322,7 +322,20 @@ How it was checked:
   receiver (starting blind at 0 Hz) the same signal and checks both against what was sent. Seconds out of the 42 (or
   whatever was sent) that came out, three seeds each; "wrong" is a report with a field that differs from what was sent:
 
-@@DFM_TABLE@@
+  | Es/N0 (dB) | 16 | 12 | 10 | 9 | 8 | 7 | 6 |
+  |---|---|---|---|---|---|---|---|
+  | this receiver | 41, 41, 41 | 41, 41, 41 | 41, 41, 41 | 41, 41, 41 | 40, 40, 38 | 36, 25, 28 | 12, 5, 4 |
+  | dfm09mod | 41, 41, 41 | 41, 41, 41 | 41, 40, 41 | 40, 40, 40 | 39, 37, 39 | 34, 25, 28 | 10, 5, 5 |
+
+  Both decoders give 41 of the 42 seconds when the signal is good: dfm09mod holds back its first report by design, and
+  this receiver's first second goes while the carrier search finds the carrier (it starts blind, 3 kHz away). The few
+  "wrong" reports in these runs (one or two at 6 and 7 dB, from either decoder) are all temperatures from a measurement
+  channel that was several seconds old when the report was made, not positions or times; no position, time or serial was
+  wrong at 7 dB or better. Other conditions, seconds out of 42 at 12 dB and at 10 dB (dfm09mod in brackets): the DFM-06,
+  -17, -09P and -17P generated the same way, 41 and 41 at 12 dB (41); inverted polarity 41, 41 (41, 41); the carrier at
+  −9 kHz and at +8 kHz, 41, 41 (41, 41); the carrier drifting 5 kHz over the recording, **42, 42 (24, 17)**, where
+  dfm09mod, told one exact carrier frequency, is off the signal for part of it. Every report equals what was sent (and,
+  where both decoded it, dfm09mod's) in every field to the precision the JSON prints.
 
 * **Unit tests**: every single-bit error of every codeword mended and every double-bit error noticed; the interleaver
   round trip; packets built field by field (a known position, speed, time and date, with the GPS-time conversion
@@ -373,7 +386,19 @@ How it was checked:
   `Tools/m10-oracle-compare.py` runs both on I/Q (m10m20mod `--IQ FQ --lpIQ --json --ptu`), 288 kS/s, starting blind.
   Frames out of 30, three seeds each, one frame a second:
 
-@@M10_TABLE@@
+  | Es/N0 (dB) | 14 | 12 | 10 | 9 | 8 | 7 | 6 |
+  |---|---|---|---|---|---|---|---|
+  | this receiver | 29, 30, 30 | 29, 29, 29 | 29, 29, 29 | 29, 29, 29 | 23, 21, 21 | 6, 4, 6 | 0, 0, 0 |
+  | m10m20mod | 30, 30, 30 | 30, 30, 30 | 30, 29, 30 | 28, 24, 28 | 13, 19, 14 | 0, 1, 3 | 0, 0, 0 |
+
+  The one frame this receiver does not give at 10 dB and better is the first, while the carrier search finds the carrier.
+  Below that it hears more than m10m20mod: at 8 dB about 21 frames against 15, at 7 dB a handful against almost none.
+  No frame had a wrong field at any level, from either decoder. Other conditions, frames out of 30 at 14 dB and at 10 dB
+  (m10m20mod in brackets): M20 30, 29 (30, 30); M10+ 30, 29 (m10m20mod gives these no frame number, so they are not
+  compared); inverted 30, 29 (30, 30); the carrier at −8 kHz 29, 29 (30, 29) and at +6 kHz 29, 29 (30, 29); drifting
+  5 kHz 30, 29 (29, 22); **9616 symbols a second 30, 29 (16, 0)** and 9590 30, 29 (0, 0); the signal's deviation 3.6 kHz
+  29, 29 (30, 30) and 5.2 kHz 30, 29 (30, 29), against the tone detector's assumed 4.32. m10m20mod's own symbol-rate
+  switching copes badly with a sonde that is not at 9600 in this test; this receiver finds the rate per frame.
 
 * **Unit tests**: three frames from the generator (an M10, an M10+ and an M20) that m10m20mod reads with a good
   checksum, against this package's checksum; the checksum's linearity; every field of each (including the day before for a
@@ -606,7 +631,7 @@ How it was checked:
 Decoding the oracle recordings on one core of the Linux build machine: ADS-B 2.4 s of signal in 0.29 s (release build)
 or 4.5 s (debug build); UAT 1.17 s of signal in 0.04 s (release) or 0.84 s (debug); ISM 122 s of signal in 0.74 s
 (release; rtl_433 takes 0.44 s); Meteor-M LRPT 36 s of I/Q in 1.8 s (the 80k mode 48 s in 3.2 s) (release, to images; meteor_demod's
-demodulation alone takes 0.74 s) or 35 s of soft symbols in 0.5 s; RS41 120 s of I/Q at 240 kS/s in 1.2 s, or of FM audio in 0.4 s. LoRa LongFast 7 s of I/Q at 1 MS/s in 0.85 s (8× real time; SF7 9×). ACARS five channels from 6.4 s of I/Q at 2.4 MS/s in 1.0 s (6× real time); VDL Mode 2 four channels from 4.1 s at 1.05 MS/s in 0.6 s (7×; dumpvdl2 0.22 s of CPU over its threads). Live, a decoder
+demodulation alone takes 0.74 s) or 35 s of soft symbols in 0.5 s; RS41 120 s of I/Q at 240 kS/s in 1.2 s, or of FM audio in 0.4 s; DFM 40 s of I/Q at 240 kS/s in 0.65 s (60× real time); M10 30 s at 288 kS/s in 1.4 s (21×); twelve Meshtastic listeners on a 2 MS/s capture 3.3 s in 0.95 s (3.5× real time, on four cores). LoRa LongFast 7 s of I/Q at 1 MS/s in 0.85 s (8× real time; SF7 9×). ACARS five channels from 6.4 s of I/Q at 2.4 MS/s in 1.0 s (6× real time); VDL Mode 2 four channels from 4.1 s at 1.05 MS/s in 0.6 s (7×; dumpvdl2 0.22 s of CPU over its threads). Live, a decoder
 that falls behind
 drops whole blocks and reports it rather than queueing without limit, so use a release build for ADS-B.
 
