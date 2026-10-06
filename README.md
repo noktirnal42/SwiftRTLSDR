@@ -157,11 +157,14 @@ let picture = lrpt.imager.composite()?.png                            // RGB fro
 
 let sonde = RS41Receiver(sampleRate: 240_000, offsetHz: 40_000)        // an RS41 40 kHz above the tuned frequency
 for event in sonde.process(iq: block) { print(event.report?.json() ?? "") }   // {"type": "RS41", "frame": 3172, ...}
+let dfm = DFMReceiver(sampleRate: 240_000, offsetHz: 40_000)           // Graw DFM-06/09/17: same shape, a report about every 4th frame
+let m10 = M10Receiver(sampleRate: 480_000)                             // M10, M10+ and M20 (tries 9600 and 9616 symbols/s)
 
 let preset = MeshtasticPreset.longFast                                 // US: 906.875 MHz, 1 MS/s, channel at +250 kHz
 let lora = LoRaReceiver(parameters: preset.parameters, sampleRate: 1_000_000, offsetHz: 250_000, centerFrequencyHz: 906.875e6)
 let mesh = MeshtasticDecoder(channels: [.primary(preset)])
 for frame in lora.process(iq: block) { print(mesh.decode(frame.payload)?.line ?? "") }   // !a1b2c3d4 → ^all ... TEXT "hi"
+// Several presets or slots from one capture: MeshtasticMultiReceiver (and MeshtasticPlan, which fits the channels around the DC spike)
 ```
 
 ### Command-line tool
@@ -217,6 +220,9 @@ so everything but `IOUSBHostTransport` is compiled and tested).
   loopback socket.
 * The decoders are checked against published messages, an independent decoder (pyModeS), dump978's real sample frames
   and its own decoder, and dump1090/dump978 on the same synthetic signals: see [docs/DECODERS.md](docs/DECODERS.md).
+  For the radiosondes (RS41, DFM, M10/M20) there is no real recording: `Tools/*-oracle.py` build signals from the
+  format alone and the `*-oracle-compare.py` scripts run our decoder and rs1729's (dfm09mod, m10m20mod, rs41mod) on
+  the same I/Q, checking each against what was sent.
 * `Tools/generate-tables.py <librtlsdr source dir> --check` verifies the two generated tables against the reference.
 
 To trace a real session: `RTLSDR_TRACE=/path/to/file` (or `-` for stderr) makes the driver log every control transfer.
@@ -241,7 +247,7 @@ Linux only; the macOS build of those parts has not been compiled yet.
 ## Requirements
 
 macOS 13 or later declared (built and run only on macOS 27 / Xcode 27, Swift 6). Apple silicon tested. Talking to a
-dongle needs macOS (`IOUSBHost`). On Linux the package builds and its tests pass (Swift 6.0.3), but it finds no dongles.
+dongle needs macOS (`IOUSBHost`). On Linux the package builds and its tests pass (Swift 6.3.3; 345 tests), but it finds no dongles.
 
 ## License
 
