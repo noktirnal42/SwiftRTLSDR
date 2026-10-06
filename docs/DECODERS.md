@@ -398,8 +398,9 @@ How it was checked:
   characters, the CRC and combinations, a refusal of four damaged characters, the CRC's check value (0x2189 as
   CRC-16/KERMIT); the demodulator on MSK from a modulator written in the test with a 0.2% clock error at about 13 dB,
   fed in odd-sized blocks; and two channels 425 kHz apart from one 2 MS/s capture.
-* **Not done:** reassembling multi-block messages (each block is printed, with "(more)" when another follows),
-  decoding the labels' contents (ARINC 620 message formats, such as positions in H1 or Q0 reports), and VDL Mode 2.
+* **Not done:** reassembling multi-block messages (each block is printed, with "(more)" when another follows), and
+  decoding the labels' contents (ARINC 620 message formats, such as positions in H1 or Q0 reports). VDL Mode 2, which
+  carries the same messages, follows below.
 
 ### VDL Mode 2
 
@@ -448,7 +449,7 @@ How it was checked:
 
   | Eb/N0 | 20 dB | 16 | 14 | 13 | 12 | 11 | 10 | 9 |
   |---|---|---|---|---|---|---|---|---|
-  | this receiver | 121 | 121 | 121 | 120 | 114 | 97 | 40 | 8 |
+  | this receiver | 121 | 121 | 121 | 120 | 113 | 94 | 39 | 7 |
   | dumpvdl2 2.7.0 | 121 | 120 | 46 | 10 | 3 | 1 | 0 | 0 |
 
   | carrier offset, transmitter clock | +1 kHz, 0 | 0, +50 ppm | +3 kHz, +50 ppm | −5 kHz, −50 ppm |

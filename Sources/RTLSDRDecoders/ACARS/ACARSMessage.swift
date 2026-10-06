@@ -104,6 +104,8 @@ public final class ACARSFrameDecoder {
     private var crc: [UInt8] = []
     private var parityErrors = 0
     public private(set) var rejected = 0
+    /// SOH sequences seen so far (each starts a block, good or bad).
+    public private(set) var blocksStarted = 0
 
     public init() {}
 
@@ -133,6 +135,7 @@ public final class ACARSFrameDecoder {
             if byte == Self.syn { state = .start } else { reset() }
         case .start:
             if byte == Self.soh {
+                blocksStarted += 1
                 state = .text
                 characters = []
                 parityErrors = 0

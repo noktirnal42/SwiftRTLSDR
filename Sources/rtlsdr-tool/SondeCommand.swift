@@ -4,20 +4,22 @@ import RTLSDRDecoders
 import RTLSDRKit
 import RTLSDRScan
 
-/// A mono channel of a PCM WAV file (8-bit unsigned, 16-bit signed or 32-bit float; the first channel if several).
+/// A PCM WAV file (8-bit unsigned, 16-bit signed, 32-bit integer or 32-bit float; one or several channels).
 struct WAVFile {
     let sampleRate: Double
     /// Each channel's samples (acarsdec's test recording has one ACARS channel in each of four).
     let channels: [[Float]]
-    /// The first channel.
+    /// The first channel (the one the single-channel decoders read).
     var samples: [Float] { channels[0] }
-    /// What a full-scale sample reads (32768 for 16-bit files, 1 for float).
+    /// What a full-scale sample reads: 128 for 8-bit, 32768 for 16-bit and for 32-bit integer files (scaled to 16 bits
+    /// when read), 1 for float.
     let fullScale: Float
 
     init(path: String) throws {
         struct Invalid: Error, CustomStringConvertible { let description: String }
         let data = [UInt8](try Data(contentsOf: URL(fileURLWithPath: path)))
-        func u16(_ at: Int) -> Int { Int(data[at]) | Int(data[at + 1]) << 8 }
+        // Reads past the end of a truncated file give 0 (and then an error below) rather than a trap.
+        func u16(_ at: Int) -> Int { at >= 0 && at + 1 < data.count ? Int(data[at]) | Int(data[at + 1]) << 8 : 0 }
         func u32(_ at: Int) -> Int { u16(at) | u16(at + 2) << 16 }
         guard data.count >= 12, data[0..<4].elementsEqual("RIFF".utf8), data[8..<12].elementsEqual("WAVE".utf8) else {
             throw Invalid(description: "\(path) is not a WAV file")
@@ -58,7 +60,7 @@ struct WAVFile {
         guard let decoded, rate > 0 else { throw Invalid(description: "\(path) has no audio") }
         sampleRate = Double(rate)
         channels = decoded
-        fullScale = format == 3 ? 1 : bits == 8 ? 128 : bits == 32 ? 32_768 : 32_768
+        fullScale = format == 3 ? 1 : bits == 8 ? 128 : 32_768
     }
 }
 

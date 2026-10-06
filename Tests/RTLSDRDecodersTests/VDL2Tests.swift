@@ -170,6 +170,29 @@ struct VDL2BurstTests {
         #expect(shorter.lastChecks == 4 && VDL2Burst.deinterleave(octets, layout: shorter)?.data == small)
     }
 
+    @Test func aRepairInTheUnsentPaddingIsRefused() {
+        // 20 data octets and 2 check octets: the block is padded to 249 with zeros that were never sent, so a "repair"
+        // that lands there is no repair. Three damaged octets are beyond this code; the full-length decoder used to
+        // answer most of them with a correction in the padding.
+        var generator = Seeded(state: 41)
+        let layout = VDL2Burst.Layout(bits: 8 * 20)
+        let data = (0..<20).map { _ in UInt8.random(in: 0...255, using: &generator) }
+        let sent = VDL2Burst.interleave(data, layout: layout)
+        var wrong = 0, refused = 0
+        for _ in 0..<300 {
+            var octets = sent
+            for i in Set((0..<3).map { _ in Int.random(in: 0..<sent.count, using: &generator) }) { octets[i] ^= UInt8.random(in: 1...255, using: &generator) }
+            guard octets != sent else { continue }
+            if let result = VDL2Burst.deinterleave(octets, layout: layout) {
+                if result.data != data { wrong += 1 }
+            } else {
+                refused += 1
+            }
+        }
+        // Wrong answers need a single-octet pattern that happens to fit, 22 of 255 places: about one time in ten.
+        #expect(wrong < 60 && refused > 200)
+    }
+
     @Test func erasuresAndErrorsTogether() throws {
         let code = ReedSolomon(length: 255, parityCount: 6)
         var generator = Seeded(state: 9)

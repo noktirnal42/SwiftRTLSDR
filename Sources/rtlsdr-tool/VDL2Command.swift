@@ -15,9 +15,12 @@ private final class VDL2Printer: @unchecked Sendable {
     var raw = false
     var receiver: VDL2Receiver?                     // used on the backlog's queue only
     private(set) var count = 0
+    private let clock: DateFormatter
     init(json: Bool, verbose: Bool) {
         self.json = json
         self.verbose = verbose
+        clock = DateFormatter()
+        clock.dateFormat = "HH:mm:ss"
     }
 
     func print(_ r: VDL2Receiver.Reception, time: Date) {
@@ -44,8 +47,6 @@ private final class VDL2Printer: @unchecked Sendable {
                 Swift.print(String(decoding: data, as: UTF8.self))
             }
         } else {
-            let clock = DateFormatter()
-            clock.dateFormat = "HH:mm:ss"
             var line = clock.string(from: time) + "  " + String(format: "%.3f  %5.1f dB  ", r.frequencyHz / 1e6, b.levelDB - b.noiseDB)
             if verbose { line += String(format: "%+.1f ppm  ", ppm) + (b.correctedOctets > 0 ? "(\(b.correctedOctets) fixed)  " : "") }
             Swift.print(line + r.frame.line)
@@ -67,7 +68,7 @@ func vdl2(_ arguments: Arguments) {
         channels = list.map { $0 * 1e6 }
     }
     let rate = arguments.double("rate", default: 1_050_000)
-    guard (rate / 42_000).rounded() * 42_000 == rate.rounded() else { fail("--rate must be a multiple of 42000 (1050000, 1680000, 2100000, ...)") }
+    guard (rate / 42_000).rounded() * 42_000 == rate else { fail("--rate must be a multiple of 42000 (1050000, 1680000, 2100000, ...)") }
     var center = arguments.option("center").map { _ in arguments.double("center", default: 0) }
         ?? ((channels.min()! + channels.max()!) / 2)
     if arguments.option("center") == nil, channels.contains(where: { abs($0 - center) < 15_000 }) { center += 12_500 }

@@ -31,7 +31,8 @@ public enum VDL2Burst {
     }
 
     /// The burst length in bits from the 25 header bits (the first in bit 24), with one wrong bit repaired; nil if the
-    /// header is beyond that or the reserved bits are not zero.
+    /// header is beyond that. The three reserved bits are zero by definition, so they are taken as zero whatever
+    /// arrives (dumpvdl2 does the same); a repair therefore reaches the other 22 bits.
     ///
     /// With `reliability` (one figure per header bit, larger is surer), the repair is the one or two bits whose turning
     /// leaves no syndrome and costs the least reliability, which reaches two wrong bits when the demodulator knows
@@ -155,6 +156,9 @@ public enum VDL2Burst {
                     words[row] = received
                     let limit = erasures == unsent ? nil : (budget - erasures.count) / 2
                     repaired = code.correct(&words[row], erasures: erasures, maximumErrors: limit) != nil
+                    // A short block is padded with zeros that were never sent: a repair that changes them is a wrong one
+                    // (the full-length code does not know that), and the next attempt gets its turn.
+                    if repaired && length < 249 && words[row][length..<249].contains(where: { $0 != 0 }) { repaired = false }
                 }
                 guard repaired else { return nil }
                 corrected += sent.filter { words[row][$0] != received[$0] }.count

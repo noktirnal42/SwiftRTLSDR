@@ -13,7 +13,12 @@ private final class ACARSPrinter: @unchecked Sendable {
     let json: Bool
     var receiver: ACARSReceiver?                    // used on the backlog's queue only
     private(set) var count = 0
-    init(json: Bool) { self.json = json }
+    private let clock: DateFormatter
+    init(json: Bool) {
+        self.json = json
+        clock = DateFormatter()
+        clock.dateFormat = "HH:mm:ss"
+    }
 
     func print(_ message: ACARSMessage, channel: Int, frequencyHz: Double?, levelDB: Double?, time: Date = Date()) {
         count += 1
@@ -23,8 +28,6 @@ private final class ACARSPrinter: @unchecked Sendable {
             if let levelDB { extra["level"] = (levelDB * 10).rounded() / 10 }
             Swift.print(message.json(extra: extra))
         } else {
-            let clock = DateFormatter()
-            clock.dateFormat = "HH:mm:ss"
             var line = clock.string(from: time) + "  "
             line += frequencyHz.map { String(format: "%.3f", $0 / 1e6) } ?? "#\(channel + 1)"
             if let levelDB { line += String(format: "  %5.1f dB", levelDB) }
@@ -44,9 +47,9 @@ func acars(_ arguments: Arguments) {
         do { wav = try WAVFile(path: path) } catch { fail("\(error)") }
         for (channel, samples) in wav.channels.enumerated() {
             let demodulator = ACARSDemodulator(sampleRate: wav.sampleRate)
-            for message in demodulator.process(audio: samples) {
-                let level = demodulator.lastLevel / Double(wav.fullScale)
-                printer.print(message, channel: channel, frequencyHz: nil, levelDB: 20 * log10(max(level, 1e-12)))
+            for decoded in demodulator.decode(audio: samples) {
+                let level = decoded.level / Double(wav.fullScale)
+                printer.print(decoded.message, channel: channel, frequencyHz: nil, levelDB: 20 * log10(max(level, 1e-12)))
             }
         }
         FileHandle.standardError.write(Data("messages: \(printer.count)\n".utf8))
@@ -63,7 +66,7 @@ func acars(_ arguments: Arguments) {
         channels = list.map { $0 * 1e6 }
     }
     let rate = arguments.double("rate", default: 2_400_000)
-    guard (rate / 12_500).rounded() * 12_500 == rate.rounded() else { fail("--rate must be a multiple of 12500 (2400000, 2000000, ...)") }
+    guard (rate / 12_500).rounded() * 12_500 == rate else { fail("--rate must be a multiple of 12500 (2400000, 2000000, ...)") }
     var center = arguments.option("center").map { _ in arguments.double("center", default: 0) }
         ?? ((channels.min()! + channels.max()!) / 2)
     // Keep every channel off the DC spike.

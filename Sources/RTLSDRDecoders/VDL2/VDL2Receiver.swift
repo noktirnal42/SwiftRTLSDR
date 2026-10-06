@@ -333,8 +333,8 @@ public final class VDL2Receiver {
         self.sampleRate = sampleRate
         self.centerHz = centerHz
         self.channels = channels
-        let first = (2...16).reversed().first { total % $0 == 0 } ?? 1
-        paths = channels.map { Path(sampleRate: sampleRate, offsetHz: $0 - centerHz, first: first, second: total / first) }
+        let (first, second) = ChannelDecimator.split(total: total)
+        paths = channels.map { Path(sampleRate: sampleRate, offsetHz: $0 - centerHz, first: first, second: second) }
     }
 
     public func process(iq block: [UInt8]) -> [Reception] {
@@ -349,98 +349,21 @@ public final class VDL2Receiver {
                 }
             }
         }
-        return receptions.sorted { $0.sampleIndex < $1.sampleIndex }
+        // By time; the frames of one burst share it and keep their order (an enumerated sort is stable).
+        return receptions.enumerated().sorted { ($0.element.sampleIndex, $0.offset) < ($1.element.sampleIndex, $1.offset) }.map(\.element)
     }
 
-    /// One channel: oscillator, second-order CIC (integer, wrapping), a low-pass FIR to 42 kS/s, the demodulator.
+    /// One channel: the shared front end (flat to ±13 kHz, down by 29 kHz: whatever folds back from above 21 kHz lands
+    /// outside ±13 kHz) and the demodulator; amplitude 1 is full scale.
     final class Path {
         let demodulator = VDL2Demodulator()
-        private let step: (Double, Double)
-        private var oscillator = (1.0, 0.0)
-        private var rotations = 0
-        private let first: Int, second: Int
-        private var i1 = (0 as Int64, 0 as Int64), i2 = (0 as Int64, 0 as Int64)
-        private var c1 = (0 as Int64, 0 as Int64), c2 = (0 as Int64, 0 as Int64)
-        private var phase = 0
-        private let taps: [Double]
-        private var historyI: [Double], historyQ: [Double]
-        private var historyIndex = 0, secondPhase = 0
-        private var leftover: UInt8?
+        private let decimator: ChannelDecimator
 
         init(sampleRate: Double, offsetHz: Double, first: Int, second: Int) {
-            self.first = first
-            self.second = second
-            let w = -2 * Double.pi * offsetHz / sampleRate
-            step = (cos(w), sin(w))
-            let middle = sampleRate / Double(first)
-            // Flat to ±13 kHz (the signal reaches 8.4 kHz, plus a carrier offset), down by 29 kHz (whatever folds back
-            // from above 21 kHz lands outside ±13 kHz). Hann-windowed sinc, unity gain; amplitude 1 is full scale.
-            let count = Int((4 * middle / 16_000).rounded()) | 1
-            let cutoff = 2 * 21_000 / middle
-            let raw = (0..<count).map { n -> Double in
-                let t = Double(n - count / 2)
-                let sinc = t == 0 ? cutoff : sin(Double.pi * cutoff * t) / (Double.pi * t)
-                return sinc * (0.5 - 0.5 * cos(2 * Double.pi * Double(n) / Double(count - 1)))
-            }
-            let gain = raw.reduce(0, +) * 127.5
-            taps = raw.map { $0 / gain }
-            historyI = [Double](repeating: 0, count: count)
-            historyQ = [Double](repeating: 0, count: count)
+            decimator = ChannelDecimator(sampleRate: sampleRate, offsetHz: offsetHz, first: first, second: second,
+                                         cutoffHz: 21_000, transitionHz: 16_000, outputScale: 1 / 127.5)
         }
 
-        func process(_ block: [UInt8]) -> [VDL2Demodulator.Burst] {
-            var out: [Float] = []
-            out.reserveCapacity(block.count / (first * second) + 4)
-            var index = 0
-            if let i = leftover, !block.isEmpty {
-                push(i, block[0], into: &out)
-                leftover = nil
-                index = 1
-            }
-            while index + 1 < block.count {
-                push(block[index], block[index + 1], into: &out)
-                index += 2
-            }
-            if index < block.count { leftover = block[index] }
-            return demodulator.process(out)
-        }
-
-        @inline(__always)
-        private func push(_ iByte: UInt8, _ qByte: UInt8, into out: inout [Float]) {
-            let x = Double(iByte) - 127.5, y = Double(qByte) - 127.5
-            let (c, s) = oscillator
-            let mi = x * c - y * s, mq = x * s + y * c
-            oscillator = (c * step.0 - s * step.1, c * step.1 + s * step.0)
-            rotations += 1
-            if rotations == 4_096 {
-                let norm = (oscillator.0 * oscillator.0 + oscillator.1 * oscillator.1).squareRoot()
-                oscillator = (oscillator.0 / norm, oscillator.1 / norm)
-                rotations = 0
-            }
-            i1.0 &+= Int64((mi * 256).rounded()); i1.1 &+= Int64((mq * 256).rounded())
-            i2.0 &+= i1.0; i2.1 &+= i1.1
-            phase += 1
-            guard phase == first else { return }
-            phase = 0
-            let d1 = (i2.0 &- c1.0, i2.1 &- c1.1)
-            c1 = i2
-            let d2 = (d1.0 &- c2.0, d1.1 &- c2.1)
-            c2 = d1
-            let scale = 1 / (256 * Double(first * first))
-            historyI[historyIndex] = Double(d2.0) * scale
-            historyQ[historyIndex] = Double(d2.1) * scale
-            historyIndex = (historyIndex + 1) % taps.count
-            secondPhase += 1
-            guard secondPhase == second else { return }
-            secondPhase = 0
-            var fi = 0.0, fq = 0.0, h = historyIndex
-            for tap in taps {
-                h = h == 0 ? taps.count - 1 : h - 1
-                fi += tap * historyI[h]
-                fq += tap * historyQ[h]
-            }
-            out.append(Float(fi))
-            out.append(Float(fq))
-        }
+        func process(_ block: [UInt8]) -> [VDL2Demodulator.Burst] { demodulator.process(decimator.process(block)) }
     }
 }

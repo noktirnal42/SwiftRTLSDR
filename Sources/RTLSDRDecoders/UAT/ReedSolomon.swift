@@ -110,23 +110,28 @@ public struct ReedSolomon: Sendable {
         }
         var previous = locator
         var order = erasures.count
+        var shift = 1
+        var lastDiscrepancy: UInt8 = 1
         for n in erasures.count..<parityCount {
             var discrepancy: UInt8 = 0
-            for i in 0...n where i < locator.count { discrepancy ^= mul(locator[i], syndromes[n - i]) }
-            let shifted = [0] + previous
+            for i in 0..<min(locator.count, n + 1) { discrepancy ^= mul(locator[i], syndromes[n - i]) }
             if discrepancy == 0 {
-                previous = shifted
+                shift += 1
                 continue
             }
-            var updated = locator + [UInt8](repeating: 0, count: max(0, shifted.count - locator.count))
-            for (i, coefficient) in shifted.enumerated() { updated[i] ^= mul(discrepancy, coefficient) }
-            if 2 * order <= n + erasures.count {
+            let scale = div(discrepancy, lastDiscrepancy)
+            let lengthens = 2 * order <= n + erasures.count
+            let saved = lengthens ? locator : []
+            if locator.count < previous.count + shift { locator += [UInt8](repeating: 0, count: previous.count + shift - locator.count) }
+            for (i, coefficient) in previous.enumerated() { locator[i + shift] ^= mul(scale, coefficient) }
+            if lengthens {
+                previous = saved
                 order = n + 1 + erasures.count - order
-                previous = locator.map { div($0, discrepancy) }
+                lastDiscrepancy = discrepancy
+                shift = 1
             } else {
-                previous = shifted
+                shift += 1
             }
-            locator = updated
         }
         while locator.count > 1 && locator.last == 0 { locator.removeLast() }
         let degree = locator.count - 1
