@@ -379,3 +379,65 @@ struct M10ReceiverTests {
         #expect(counters == [40, 42], "\(counters)")
     }
 }
+
+/// A frame's bytes with the 16-bit checksum recomputed, after `change` has altered some fields.
+private func m10FrameBytes(hex: String, change: (inout [UInt8]) -> Void) -> [UInt8] {
+    var bytes = stride(from: 0, to: hex.count, by: 2).map { i -> UInt8 in
+        let start = hex.index(hex.startIndex, offsetBy: i)
+        return UInt8(hex[start..<hex.index(start, offsetBy: 2)], radix: 16)!
+    }
+    change(&bytes)
+    let length = Int(bytes[0])
+    let check = M10.checksum(bytes[0..<(length - 1)])
+    bytes[length - 1] = UInt8(check >> 8)
+    bytes[length] = UInt8(check & 0xff)
+    return bytes
+}
+
+/// A report is only worth giving if the sonde can be on the map: a frame with a good checksum but an impossible
+/// position (noise passes a 16-bit checksum now and then) is not one. DFM has always refused these.
+struct M10PositionPlausibilityTests {
+    @Test func aTrimbleFrameWithLatitudeBeyondThePolesIsNotReported() throws {
+        var builder = M10FrameBuilder()
+        builder.latitude = 120
+        let frame = try #require(M10Frame(bytes: builder.bytes()))
+        #expect(frame.isValid, "the checksum is good, only the position is impossible")
+        #expect(M10Decoder().report(frame) == nil)
+    }
+
+    @Test func aTrimbleFrameNearThePoleIsStillReported() throws {
+        var builder = M10FrameBuilder()
+        builder.latitude = 89.9
+        _ = try m10Report(builder.bytes())
+    }
+
+    @Test func anM20FrameWithAnImpossibleLatitudeIsNotReported() throws {
+        let bytes = m10FrameBytes(hex: M10Vectors.m20) { frame in
+            let value = 95_000_000                                       // 95 degrees, in the M20's millionths
+            for k in 0..<4 { frame[0x1c + k] = UInt8(truncatingIfNeeded: value >> (8 * (3 - k))) }
+        }
+        let frame = try #require(M10Frame(bytes: bytes))
+        #expect(frame.isValid)
+        #expect(M10Decoder().report(frame) == nil)
+    }
+
+    @Test func anM10PlusFrameWithAnImpossibleLongitudeIsNotReported() throws {
+        let bytes = m10FrameBytes(hex: M10Vectors.m10Plus) { frame in
+            let value = 200_000_000                                      // 200 degrees east
+            for k in 0..<4 { frame[0x08 + k] = UInt8(truncatingIfNeeded: value >> (8 * (3 - k))) }
+        }
+        let frame = try #require(M10Frame(bytes: bytes))
+        #expect(frame.isValid)
+        #expect(M10Decoder().report(frame) == nil)
+    }
+
+    @Test func theKnownGoodVectorsStillDecode() throws {
+        for hex in [M10Vectors.m10, M10Vectors.m10Plus, M10Vectors.m20] {
+            let bytes = stride(from: 0, to: hex.count, by: 2).map { i -> UInt8 in
+                let start = hex.index(hex.startIndex, offsetBy: i)
+                return UInt8(hex[start..<hex.index(start, offsetBy: 2)], radix: 16)!
+            }
+            _ = try m10Report(bytes)
+        }
+    }
+}

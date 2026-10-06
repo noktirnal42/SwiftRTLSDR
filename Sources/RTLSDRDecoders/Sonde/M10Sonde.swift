@@ -88,6 +88,12 @@ public struct M10Decoder: Sendable {
         }
     }
 
+    /// A frame with a good checksum can still be noise that happened to pass a 16-bit check; one whose position is off the
+    /// globe is not a sonde. (The DFM decoder has always refused these.)
+    static func isPlausible(latitude: Double, longitude: Double) -> Bool {
+        latitude.isFinite && longitude.isFinite && abs(latitude) <= 90 && abs(longitude) <= 180
+    }
+
     // MARK: M10 (Trimble) and M20
 
     private func trimbleStyle(_ frame: M10Frame, kind: M10Frame.Kind) -> M10Report? {
@@ -130,6 +136,7 @@ public struct M10Decoder: Sendable {
             longitude = Double(frame.signed(0x12, 4)) / scale
             altitude = Double(frame.signed(0x16, 4)) / 1000
         }
+        guard Self.isPlausible(latitude: latitude, longitude: longitude) else { return nil }
         let velocityScale = isM20 ? 100.0 : 200.0
         let east = Double(frame.signed(isM20 ? 0x0b : 0x04, 2)) / velocityScale
         let north = Double(frame.signed(isM20 ? 0x0d : 0x06, 2)) / velocityScale
@@ -159,6 +166,8 @@ public struct M10Decoder: Sendable {
         let hour = time / 10_000, minute = time % 10_000 / 100, second = time % 100
         let day = date / 10_000, month = date % 10_000 / 100, year = 2000 + date % 100
         guard hour < 24, minute < 60, second < 61, (1...12).contains(month), (1...31).contains(day) else { return nil }
+        let latitude = Double(frame.signed(0x04, 4)) / 1e6, longitude = Double(frame.signed(0x08, 4)) / 1e6
+        guard Self.isPlausible(latitude: latitude, longitude: longitude) else { return nil }
         let east = Double(frame.signed(0x0f, 2)) / 100, north = Double(frame.signed(0x11, 2)) / 100
         var heading = atan2(east, north) * 180 / .pi
         if heading < 0 { heading += 360 }
@@ -168,7 +177,7 @@ public struct M10Decoder: Sendable {
             kind: .m10Plus, counter: counter, gpsSeconds: gps, serial: Self.m10Serial(frame),
             rawSerial: (0..<5).map { String(format: "%02X", frame.byte(0x5d + $0)) }.joined(),
             year: year, month: month, day: day, hour: hour, minute: minute, second: Double(second),
-            latitude: Double(frame.signed(0x04, 4)) / 1e6, longitude: Double(frame.signed(0x08, 4)) / 1e6,
+            latitude: latitude, longitude: longitude,
             altitude: Double(frame.signed(0x0c, 3)) / 100, horizontalSpeed: (east * east + north * north).squareRoot(),
             heading: heading, verticalSpeed: Double(frame.signed(0x13, 2)) / 100, satellites: nil,
             batteryVolts: Self.battery(frame, isM20: false), temperature: Self.temperature(frame, isM20: false),
