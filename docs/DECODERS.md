@@ -410,6 +410,61 @@ How it was checked:
   frame (the signal levels: it is recognised and skipped), the M2K2's own differences (it is read as an M10 with its time
   left in GPS), and the M10+'s time and date are checked on synthetic frames only.
 
+### Pagers (POCSAG)
+
+POCSAG sends 2-FSK (±4.5 kHz, a 1 the lower frequency) at 512, 1200 or 2400 bit/s on 25 kHz channels. A transmission is a
+preamble of 576 alternating bits and then batches: a synchronisation codeword (0x7CD215D8) and eight frames of two 32-bit
+codewords. A codeword is a flag (0 address, 1 message), 20 bits, ten check bits of a (31,21) BCH code (generator
+x^10 + x^9 + x^8 + x^6 + x^5 + x^3 + 1) and an even-parity bit; 0x7A89C197 fills the frames nobody uses. An address
+codeword carries the high 18 bits of the pager's 21-bit address and its two function bits, the low three bits being the
+frame it sits in; the message codewords that follow carry 20 bits each of text until the next address or idle codeword:
+four-bit digits ("0123456789.U -][") or seven-bit characters, both least significant bit first. Which one a page is
+depends on the network; function 0 is numeric and the others alphanumeric by the book, and `--mode auto` guesses from
+the content. The format is ITU-R M.584 as documented by the paging community; multimon-ng is the oracle.
+
+* **Channel.** The FM front end at 48 kHz with a ±8.5 kHz low-pass (±4.5 kHz deviation plus the data's sidebands; the
+  receiver follows a carrier up to about ±3.5 kHz off where it listens, `--cutoff` moves the limit) and the carrier search
+  off: a paging channel is silent most of the time, so the search would move on noise or on a neighbour. Each page found
+  re-tunes the receiver by the audio's average.
+* **Bits.** A second-order low-pass at 0.8 of the bit rate takes off what a discriminator's noise adds at high
+  frequencies (it made the difference between losing a quarter of the pages at 2400 bit/s and none), a slow average takes
+  off the carrier offset, a timing loop is pulled by zero crossings and each bit is the sign of the integral over its period.
+  The three rates run side by side, each a separate decoder.
+* **Codewords.** The synchronisation codeword is found with up to two wrong bits in either polarity; sixteen codewords
+  follow, then the next synchronisation codeword (three wrong bits allowed) or the end. Each codeword is repaired by
+  the nearest valid codeword within two bits (the code, with parity, has distance 6, so that is unique); a page with a
+  codeword beyond repair is dropped (`--partial` keeps it).
+
+How it was checked:
+
+* **Synthetic signals only.** `Tools/pocsag-oracle.py` builds pages (random addresses, numeric and alphanumeric text, a
+  few bursts) from the format, FM-modulates them with noise, and writes the I/Q and, from the same noisy samples through a
+  discriminator, 22.05 kHz FM audio. multimon-ng decodes all of the audio's pages as sent at every rate.
+  `Tools/pocsag-oracle-compare.py` runs it and this decoder (on the I/Q, starting blind) and checks each against what was
+  sent. Pages out of 24, three seeds, by carrier-to-noise ratio in 25 kHz:
+
+  | CNR (dB) | 12 | 9 | 7 | 6 |
+  |---|---|---|---|---|
+  | 512 bit/s, this receiver | 24, 24, 24 | 24, 24, 24 | 24, 24, 24 | 24, 24, 24 |
+  | 1200 bit/s | 24, 24, 24 | 24, 24, 24 | 24, 24, 24 | 24, 24, 24 |
+  | 2400 bit/s | 24, 24, 24 | 24, 24, 23 | 20, 24, 23 | 18, 24, 23 |
+  | multimon-ng, all rates | 24, 24, 24 | 24, 24, 24 | 24, 24, 24 | 23, 24, 24 |
+
+  multimon-ng reads discriminator audio from a numpy chain (a sharper filter before and after the discriminator, 22.05
+  kHz), this decoder the I/Q through its own front end, so the comparison favours multimon-ng a little. No page from
+  either had a wrong word at 9 dB and above; at 7 dB and below the 2400 bit/s decoder gives a few pages in which a
+  codeword with four or more wrong bits was mended into another codeword (a few of 24 at 7 dB, none at 9). Other
+  conditions at 1200 bit/s, 15 and 10 dB: polarity inverted and the carrier at −2.5 kHz, all pages. Without the
+  trailing idle batch a transmitter sends, the last page can be lost where the carrier drops.
+* **Unit tests**: the synchronisation and idle codewords being valid codewords of the code, one and two wrong bits
+  mended and three refused over random words, the address split, pages in the frames their addresses name, a page running
+  into the next batch, polarity, repaired and unrepairable codewords (with and without `--partial`), text with no address,
+  noise and garbage bits, the JSON and line text; and the receiver on FM audio at each rate and at 22.05 and 48 kHz, a bit
+  rate 0.33 % off either way, a carrier offset and inverted audio, on I/Q at an offset carrier, from a mistuned listening
+  frequency that the first page brings in, and on noise alone.
+* **Not done:** FLEX and the other pager systems; character sets other than ASCII (multimon-ng has national ones); the
+  Skyper format; message continuation across transmissions; real traffic.
+
 ### Radiosondes (InterMet iMet-1 and iMet-4)
 
 The iMet is different from the other three: it sends no serial number and no bit-level coding of its own. Its carrier is
@@ -725,6 +780,10 @@ Tools/lrpt-oracle.py scene.cadu scene.u8 --mode oqpsk --offset -800 --doppler 25
 rtlsdr-tool meteor --ifile scene.u8 --mode oqpsk --out ours --cadu ours.cadu                  # compare with scene.cadu, scene/
 meteor_demod -B -s 288000 --bps 8 -m oqpsk -o md.s scene.u8 && rtlsdr-tool meteor --soft md.s --mode oqpsk
 satdump meteor_m2-x_lrpt baseband scene.u8 sd --samplerate 288000 --baseband_format cu8
+
+git clone https://github.com/EliasOenal/multimon-ng && cmake -S multimon-ng -B multimon-ng/build && make -C multimon-ng/build
+Tools/pocsag-oracle-compare.py multimon-ng/build/multimon-ng rtlsdr-tool /tmp/pocsag --baud 1200 --cnr=20,12,9,7 --seeds 1,2,3    # numpy, scipy
+Tools/pocsag-oracle-compare.py multimon-ng/build/multimon-ng rtlsdr-tool /tmp/pocsag --baud 2400 --invert --offset -2500
 
 git clone https://github.com/rs1729/RS && (cd RS/imet && gcc imet1rs_dft.c -lm -o imet1rs_dft)
 Tools/imet-oracle-compare.py RS/imet/imet1rs_dft rtlsdr-tool /tmp/imet --cnr=25,14,11,10,9,8 --seeds 1,2 --seconds 60   # numpy, scipy

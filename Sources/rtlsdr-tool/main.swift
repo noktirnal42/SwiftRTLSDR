@@ -38,6 +38,8 @@ usage:
                     [--ifile FILE [--center <Hz>]] [--wav FILE (12.5 kHz AM audio, a channel each)]
   rtlsdr-tool vdl2 [--region eu|us | --freq 136.975,136.875,...] [--rate 1050000 (a multiple of 42 kHz)] [--json] [--verbose] [--raw]
                    [--gain auto|<dB>] [--ppm N|eeprom] [--seconds N] [--ifile FILE [--center <Hz>]]
+  rtlsdr-tool pager [--baud 512|1200|2400|all] [--mode standard|auto|numeric|alpha] [--partial] [--search] [--cutoff <Hz>] [--json] [--wav FILE | --ifile FILE [--rate 240000] [--offset <Hz>] | --freq <Hz>]
+                    [--gain auto|<dB>] [--ppm N|eeprom] [--seconds N]
   rtlsdr-tool mesh [--preset LongFast | --presets LongFast,MediumFast,... [--all-slots] [--center <Hz>]] [--region US] [--slot N | --freq <Hz>] [--primary NAME[:KEY]] [--channel NAME[:KEY]]...
                    [--ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>]] [--json] [--verbose] [--gain auto|<dB>] [--ppm 0] [--seconds N]
   rtlsdr-tool serve [--address 127.0.0.1] [--port 1234] [--rate 2048000] [--freq 100e6] [--gain auto|<dB>] [--allow-bias-tee] [--fast]
@@ -164,6 +166,8 @@ case "acars":
     acars(arguments)
 case "vdl2":
     vdl2(arguments)
+case "pager":
+    pager(arguments)
 
 default:
     print(usage)

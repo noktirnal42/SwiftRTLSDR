@@ -64,6 +64,9 @@ public final class FMFrontEnd {
     /// The last carrier search: offset from where the receiver was listening (hertz) and how far the signal stood
     /// above the noise (dB); nil until the first half second.
     public private(set) var lastSearch: (offsetHz: Double, snrDB: Double)?
+    /// Whether the search moves the listening frequency (it always measures). A signal that is not always there (a pager's
+    /// channel) is not worth chasing: the search would move on noise, or in the middle of a transmission.
+    public var searchMoves = true
 
     /// I/Q at `sampleRate` with the signal `offsetHz` above the tuned frequency. `channelCutoffHz` is the low-pass's
     /// cutoff (the signal's deviation plus its keying rate, about); `searchSpanHz` is how far from the strongest line
@@ -248,7 +251,7 @@ public final class FMFrontEnd {
         lastSearch = (centre, snr)
         // The spectrum is of samples mixed with `blockOffsetHz`; one move a block, since the next measurement of the same
         // block would be against the same mixing.
-        if snr >= 6 && abs(centre) > 300 && samplesSinceGoodFrame > Int(3 * audioRate) && !movedInBlock {
+        if searchMoves && snr >= 6 && abs(centre) > 300 && samplesSinceGoodFrame > Int(3 * audioRate) && !movedInBlock {
             listen(at: blockOffsetHz + centre)
             movedInBlock = true
         }
