@@ -842,11 +842,11 @@ How it was checked:
   and this package decode the same frames. Over 4 200 messages (seeds 21 to 25 at 600, 31 to 34 at 300, and more), every message
   that both read has the same alternatives at every level (modulo naming: dumpvdl2 calls `levelFeet` `feet`, and prints no
   alternative for latitudes and longitudes), the same strings and the same message numbers; the only ones not compared are
-  context management messages sent as plain data after a connection that only this package remembers. The comparison found three
-  differences between Wireshark's text and what dumpvdl2 (which decodes live traffic) has, all now patched
-  (`ATNSchema.make()`): `TrafficType` has no `noneSpecified (0)`; `LevelSpeed` has one `speed`, not `SpeedSpeed`'s two; and
-  the two modules' `VersionNumber` are different types (a global namespace here let the CPDLC one replace the CM one; every
-  module has its own scope now).
+  context management messages sent as plain data after a connection that only this package remembers. The comparison found two
+  differences between Wireshark's text and what dumpvdl2 (which decodes live traffic) has, both patched
+  (`ATNSchema.make()`): `TrafficType` has no `noneSpecified (0)`, and `LevelSpeed` has one `speed`, not `SpeedSpeed`'s two. It
+  also found a bug of this package's loader: the CM and CPDLC modules each define a `VersionNumber` (1..255 and 0..15), and a
+  global namespace let the CPDLC one replace the CM one; every module has its own scope now.
 * **Constraint tables** (`Tools/atn-schema-compare.py`): the PER-visible constraint of every named integer, enumeration, string and
   SEQUENCE OF type (155 types) is the same as asn1c's, except dumpvdl2's `TrafficType`. Member types of sequences differ in
   name only (aliases such as `AirportDeparture`) except `LevelSpeed`.
