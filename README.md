@@ -125,7 +125,7 @@ rendered to PNG, METAR/TAF/winds-aloft text; 433/868/915 MHz sensors the way rtl
 stations, thermometers, remotes: AcuRite, Oregon Scientific, LaCrosse, Fine Offset/Ecowitt, Bresser and others); and
 Meteor-M weather-satellite images on 137 MHz (LRPT, QPSK and offset QPSK), with a live dashboard in the browser; and
 radiosondes on 400-406 MHz (Vaisala RS41, Graw DFM-06/09/17, Meteomodem M10/M20 and InterMet iMet-1/iMet-4: position, altitude, velocity,
-temperature, serial number), found by scanning or on a given frequency; and AIS ships on 161.975 and 162.025 MHz (position, name, destination: the NMEA sentences or JSON); and POCSAG pager traffic on VHF/UHF (any bit rate: address, function, numeric or alphanumeric text); and Meshtastic mesh traffic on LoRa (text
+temperature, serial number), found by scanning or on a given frequency; and AIS ships on 161.975 and 162.025 MHz (position, name, destination: the NMEA sentences or JSON); and CPDLC and context-management messages inside VDL Mode 2's ATN traffic (X.25, CLNP, transport and ACSE under them: the standard's wording of each message element); and POCSAG pager traffic on VHF/UHF (any bit rate: address, function, numeric or alphanumeric text); and Meshtastic mesh traffic on LoRa (text
 messages, positions, node info, telemetry; the default channel and any channel whose key you have), on the frequency
 Meshtastic picks for the preset and region, or several presets and slots at once from one capture. Meteor-M also in its
 80 ksym/s interleaved mode. ACARS on VHF (airline messages), and VDL Mode 2 (its digital successor: ACARS over AVLC,
@@ -187,6 +187,7 @@ swift run -c release rtlsdr-tool ism --json                           # 433.92 M
 swift run -c release rtlsdr-tool meteor --web 8080 --out pass/        # Meteor-M images, live at localhost:8080
 swift run -c release rtlsdr-tool sonde --scan --json                  # radiosondes on 400-406 MHz (RS41, DFM, M10/M20, iMet)
 swift run -c release rtlsdr-tool sonde --type m10 --freq 404.4e6      # one type on a known frequency (rs41, dfm, m10, imet)
+swift run -c release rtlsdr-tool vdl2 --region eu                      # VDL Mode 2: ACARS, XID and ATN traffic (CPDLC, CM) decoded; `atn --frames FILE` decodes recorded frames
 swift run -c release rtlsdr-tool ais                                  # ships' AIS on both channels (--nmea for !AIVDM sentences, --json)
 swift run -c release rtlsdr-tool pager --freq 152.84e6                # POCSAG pages at 512, 1200 and 2400 bit/s (address, function, numeric or text)
 swift run -c release rtlsdr-tool mesh --region EU_868                 # Meshtastic LongFast on 869.525 MHz
@@ -251,7 +252,7 @@ hydrogen-line spectrometer; the overload guard's back-off on a strong signal was
 ## Requirements
 
 macOS 13 or later declared (built and run only on macOS 27 / Xcode 27, Swift 6). Apple silicon tested: the package builds and
-its 380 tests pass on macOS 27 (Swift 6.4). Talking to a dongle needs macOS (`IOUSBHost`). On Linux the package builds and its tests
+its 440 tests pass on macOS 27 (Swift 6.4). Talking to a dongle needs macOS (`IOUSBHost`). On Linux the package builds and its tests
 pass (Swift 6.3.3), but it finds no dongles.
 
 ## License

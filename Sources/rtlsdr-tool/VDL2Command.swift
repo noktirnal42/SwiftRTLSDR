@@ -14,6 +14,9 @@ private final class VDL2Printer: @unchecked Sendable {
     let verbose: Bool
     var raw = false
     var receiver: VDL2Receiver?                     // used on the backlog's queue only
+    /// ATN traffic (CPDLC and context management, and the layers under them), decoded from the information frames; it remembers
+    /// what reassembly needs, so it is used on the backlog's queue only.
+    lazy var atn: ATNDecoder? = try? ATNDecoder()
     private(set) var count = 0
     private let clock: DateFormatter
     init(json: Bool, verbose: Bool) {
@@ -30,6 +33,11 @@ private final class VDL2Printer: @unchecked Sendable {
         if raw {
             Swift.print(String(format: "%.3f ", r.frequencyHz / 1e6) + r.frame.bytes.map { String(format: "%02x", $0) }.joined())
         } else if json {
+            var avlc = r.frame.jsonObject()
+            if let message = atnMessage(r.frame), let data = message.json(frequencyHz: r.frequencyHz).data(using: .utf8),
+               let object = try? JSONSerialization.jsonObject(with: data) {
+                avlc["atn"] = object
+            }
             let seconds = time.timeIntervalSince1970
             let object: [String: Any] = ["vdl2": [
                 "app": ["name": "rtlsdr-tool", "ver": "1"],
@@ -41,7 +49,7 @@ private final class VDL2Printer: @unchecked Sendable {
                 "sig_level": (b.levelDB * 10).rounded() / 10,
                 "noise_level": (b.noiseDB * 10).rounded() / 10,
                 "freq_skew": (ppm * 100).rounded() / 100,
-                "avlc": r.frame.jsonObject(),
+                "avlc": avlc,
             ] as [String: Any]]
             if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) {
                 Swift.print(String(decoding: data, as: UTF8.self))
@@ -50,7 +58,16 @@ private final class VDL2Printer: @unchecked Sendable {
             var line = clock.string(from: time) + "  " + String(format: "%.3f  %5.1f dB  ", r.frequencyHz / 1e6, b.levelDB - b.noiseDB)
             if verbose { line += String(format: "%+.1f ppm  ", ppm) + (b.correctedOctets > 0 ? "(\(b.correctedOctets) fixed)  " : "") }
             Swift.print(line + r.frame.line)
+            if let message = atnMessage(r.frame), let atn {
+                for text in atn.lines(for: message) { Swift.print("      " + text) }
+            }
         }
+    }
+
+    /// What an information frame says in the ATN's layers, if it is X.25 (ACARS and XID frames are not).
+    private func atnMessage(_ frame: AVLCFrame) -> ATNMessage? {
+        guard case .information = frame.kind, frame.acars == nil, !frame.info.isEmpty, let atn else { return nil }
+        return atn.decode(information: frame.info, source: frame.source.address, destination: frame.destination.address, fromAircraft: frame.source.type == 1)
     }
 }
 

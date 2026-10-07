@@ -261,6 +261,7 @@ def main():
     p.add_argument("--offset", type=float, default=0)
     p.add_argument("--ppm", type=float, default=0)
     p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--frames", help="send these AVLC frames (a hexadecimal frame with its FCS on each line), one a burst on the first channel, instead of random ones")
     a = p.parse_args()
     rng = np.random.default_rng(a.seed)
     channels = [float(c) for c in a.channels.split(",")]
@@ -269,11 +270,14 @@ def main():
 
     kinds = ["uplink", "downlink", "gsif", "establish", "rr"]
     plan, times, lines = [], [0.02] * len(channels), []
+    supplied = [list(bytes.fromhex(line.strip())) for line in open(a.frames) if line.strip()] if a.frames else None
+    if supplied:
+        a.bursts = len(supplied)
     for b in range(a.bursts):
-        c = b % len(channels)
+        c = 0 if supplied else b % len(channels)
         gs, aircraft = int(rng.integers(0x100000, 0xFFFFFF)), int(rng.integers(0x100000, 0xFFFFFF))
-        frames = [frame(rng, gs, aircraft, str(rng.choice(kinds, p=[0.35, 0.35, 0.1, 0.1, 0.1])))
-                  for _ in range(int(rng.integers(1, 4)))]
+        frames = [supplied[b]] if supplied else [frame(rng, gs, aircraft, str(rng.choice(kinds, p=[0.35, 0.35, 0.1, 0.1, 0.1])))
+                                                  for _ in range(int(rng.integers(1, 4)))]
         sig = modulate(symbols(burst_bits(frames)), rate, a.ppm)
         plan.append((c, times[c], sig))
         times[c] += len(sig) / rate + rng.uniform(0.005, 0.05)

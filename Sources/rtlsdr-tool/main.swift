@@ -42,6 +42,7 @@ usage:
                     [--gain auto|<dB>] [--ppm N|eeprom] [--seconds N]
   rtlsdr-tool ais [--channel a|b|both] [--rate 240000] [--center 162e6] [--json | --nmea] [--cutoff <Hz>] [--wav FILE | --ifile FILE]
                   [--gain auto|<dB>] [--ppm N|eeprom] [--seconds N]
+  rtlsdr-tool atn --frames FILE [--json]       (CPDLC and context management in raw AVLC frames, one in hexadecimal a line)
   rtlsdr-tool mesh [--preset LongFast | --presets LongFast,MediumFast,... [--all-slots] [--center <Hz>]] [--region US] [--slot N | --freq <Hz>] [--primary NAME[:KEY]] [--channel NAME[:KEY]]...
                    [--ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>]] [--json] [--verbose] [--gain auto|<dB>] [--ppm 0] [--seconds N]
   rtlsdr-tool serve [--address 127.0.0.1] [--port 1234] [--rate 2048000] [--freq 100e6] [--gain auto|<dB>] [--allow-bias-tee] [--fast]
@@ -172,6 +173,12 @@ case "pager":
     pager(arguments)
 case "ais":
     ais(arguments)
+case "atn":
+    atn(arguments)
+case "atn-schema":
+    atnSchema(arguments)
+case "atn-sample":
+    atnSample(arguments)
 
 default:
     print(usage)

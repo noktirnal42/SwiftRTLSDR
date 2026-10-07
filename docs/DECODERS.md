@@ -9,7 +9,7 @@ published messages and recordings made with other receivers. The on-air checks a
 | | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT | Radiosondes | Meshtastic (LoRa) | ACARS | VDL Mode 2 |
 |---|---|---|---|---|---|---|---|---|
 | Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) | 400-406 MHz, 240 kS/s (RS41 and DFM: any rate from 48 kS/s; M10/M20 at 288 kS/s: any rate from 96 kS/s), or FM audio | The slot Meshtastic picks for the preset and channel (US LongFast: 906.875 MHz), 1 MS/s (any multiple of the LoRa bandwidth) | 131.550, 131.125 MHz … (US), 131.525, 131.725, 131.825 MHz (Europe): several channels from one capture at 2.4 MS/s (any multiple of 12.5 kHz), or AM audio | 136.975 MHz (everywhere) and the regional ones (136.725 … 136.875 in Europe, 136.650 … 136.800 in the US), several from one capture at 1.05 MS/s (any multiple of 42 kHz) |
-| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41, Graw DFM-06/09/17, Meteomodem M10/M20 and InterMet iMet-1/iMet-4 weather balloons: position, altitude, velocity, temperature, serial, battery (the iMet: pressure, temperature, humidity and any attached instrument's data instead of a serial) | Meshtastic mesh traffic on the default channel and any channel whose key is given: text messages, positions, node info, telemetry, traceroutes, neighbour lists, acknowledgements; any LoRa frame with an explicit header (one preset on one slot, or several presets and slots from one capture) | Airline operations messages between aircraft and ground: positions, out/off/on/in times, weather requests, free text; registration, flight number, label, message number | The digital successor of ACARS: AVLC frames between aircraft and ground stations, carrying ACARS, ground stations' announcements (GSIF), aircraft logging on with their position and destination, and ATN traffic (CPDLC, ADS-C) |
+| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41, Graw DFM-06/09/17, Meteomodem M10/M20 and InterMet iMet-1/iMet-4 weather balloons: position, altitude, velocity, temperature, serial, battery (the iMet: pressure, temperature, humidity and any attached instrument's data instead of a serial) | Meshtastic mesh traffic on the default channel and any channel whose key is given: text messages, positions, node info, telemetry, traceroutes, neighbour lists, acknowledgements; any LoRa frame with an explicit header (one preset on one slot, or several presets and slots from one capture) | Airline operations messages between aircraft and ground: positions, out/off/on/in times, weather requests, free text; registration, flight number, label, message number | The digital successor of ACARS: AVLC frames between aircraft and ground stations, carrying ACARS, ground stations' announcements (GSIF), aircraft logging on with their position and destination, and ATN traffic (CPDLC and context management; not ADS-C) |
 | Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame formats as rs1729's RS project documents them (GPL-3.0, read for format facts only); its rs41mod, dfm09mod and m10m20mod as oracles; the iMet from NOAA's published packet protocol, with imet1rs_dft as oracle | Written for this package: LoRa coding from the format as gr-lora_sdr implements it, Meshtastic from its firmware and protobuf definitions (all GPL-3.0, read for format facts only); gr-lora_sdr as oracle | Written for this package: the frame format and the demodulator's method as acarsdec documents and implements them (LGPL-2.0, read, not copied); acarsdec as oracle | Written for this package from the format as dumpvdl2 implements it (GPL-3.0, read for format facts only); dumpvdl2 as oracle |
 | Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--symbol-rate 72000\|80000] [--web PORT]` | `rtlsdr-tool sonde [--type rs41\|dfm\|m10\|imet] [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` | `rtlsdr-tool mesh [--preset LongFast] [--region US] [--channel NAME:KEY] [--ifile FILE] [--json]`; `rtlsdr-tool lora --ifile FILE` for plain LoRa; `--presets LongFast,MediumFast,...` (`--all-slots --center HZ`) for several at once | `rtlsdr-tool acars [--region us\|eu \| --freq MHZ,...] [--ifile FILE [--center HZ] \| --wav FILE] [--json]` | `rtlsdr-tool vdl2 [--region eu\|us \| --freq MHZ,...] [--ifile FILE [--center HZ]] [--json] [--raw]` |
 | Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod, dfm09mod, m10m20mod and imet1rs_dft `--json` (the JSON lines radiosonde_auto_rx reads) | One line, or one JSON object, a packet; field names follow Meshtastic's protobufs | acarsdec `-o 4` (its JSON fields, same values) | dumpvdl2's JSON (`vdl2`/`avlc` objects, the fields this decoder knows), or its raw frames |
@@ -790,9 +790,78 @@ How it was checked:
   in an information frame, a GSIF, a link establishment with position, supervisory and unnumbered frames; the
   demodulator on bursts from a modulator written in the test (2.5 kHz off, the clock 40 ppm fast, about 14 dB,
   odd-sized blocks); two channels from one capture; noise alone.
-* **Not done:** the ATN stack (X.25, CLNP, IDRP, CPDLC and ADS-C, which dumpvdl2 decodes; their frames are shown as
-  bytes), reassembling ACARS messages sent in several blocks, a database of ground stations and aircraft, and VDL
-  Mode 2's own MAC timing (only reception is needed).
+* **Not done:** the ATN's ADS-C (below), IDRP, reassembling ACARS messages sent in several blocks, a database of ground
+  stations and aircraft, and VDL Mode 2's own MAC timing (only reception is needed).
+
+#### ATN: CPDLC and context management
+
+In Europe (and in Link 2000+ airspace elsewhere) aircraft talk to ATC over VDL2 with the Aeronautical Telecommunication
+Network instead of ACARS: the AVLC information field is an X.25 packet (ISO 8208, modulo 8) carrying ISO 8473 CLNP, usually
+with the compressed header of ICAO Doc 9705, over ISO 8073 class 4 transport, and above that the ULCS: short-form session
+PDUs, the presentation layer's "fully encoded data" or nothing at all, ACSE, and the applications CPDLC (controller-pilot
+messages: the 238 uplink and 114 downlink message elements, "CLIMB TO [level]", "REQUEST DIRECT TO [position]", free text)
+and context management (CM: logon, contact and forward requests). Everything above X.25 is ASN.1 in unaligned PER. What is
+read, in `ATNDecoder` (the layers) and `ASN1Schema` (the ASN.1):
+
+* **X.25** (`X25Packet`): call requests and accepts (addresses, facilities, the SNDCF compression identifier), data packets with their
+  sequence numbers and the more bit (joined before the next layer reads them), clear, reset and restart packets with their
+  causes, receive ready and reject, diagnostics.
+* **CLNP** (`CLNPHeader`): full headers (addresses, segmentation part) and the compressed data PDU (priority, flags, local
+  reference, PDU id, segment offset and length), segments joined by offset; error reports and ES-IS (hold time) are named, IDRP is
+  recognised and left as bytes.
+* **Transport** (`COTPTPDU`): connect request and confirm, disconnect request and confirm, data (normal and extended
+  formats, the end-of-TSDU bit, joined when it is clear), acknowledgements, rejects and errors, several TPDUs in one NSDU.
+  A connect request's AE-qualifier (ACSE, 22 for CPDLC, 1 for context management) is remembered with its transport
+  references and the two stations, so that the data that follows is read as that application. Without that, a context
+  management message on the data path has no marker of its own and reads as CPDLC if the bits allow (dumpvdl2 does the same);
+  the connection is forgotten at its disconnect.
+* **ULCS**: short-form session PDUs (connect, accept, refuse), presentation fully encoded data (contexts 1 and 3), ACSE
+  association requests, responses, releases and aborts, and the user information they carry.
+* **Applications**: CPDLC as the ATN carries it, the protected-mode PDUs (`ProtectedGroundPDUs`, `ProtectedAircraftPDUs`)
+  whose messages are PER encodings inside bit strings, and the aborts; CM. The wording of each message element comes from the
+  schema's own comments, its parameters are shown with the units the schema's comments give ("43180 Feet").
+
+The ASN.1 is Wireshark's copies (GPL-2.0-or-later) of ICAO Doc 9705's modules in `Tools/asn1`, parsed at run time by a small
+ASN.1 parser (`ASN1Schema`) and read and written by a PER codec (`ASN1PER`): sequences with their extension bit and optional
+bitmap, choices ordered by tag as PER indexes them (declaration order under automatic tags), extension additions as open types,
+enumerations, constrained and unconstrained integers, size-constrained strings, bit and octet strings, object identifiers,
+open types, named integers with their constraint after the braces, repeated extension markers.
+
+```
+rtlsdr-tool vdl2 --region eu                         # ATN traffic is decoded below each frame; --json adds an "atn" object to "avlc"
+rtlsdr-tool atn --frames frames.txt [--json]         # AVLC frames in hexadecimal, a line each (what `vdl2 --raw` prints, frequency first)
+```
+
+How it was checked:
+
+* **dumpvdl2 on random traffic** (`Tools/atn-oracle-compare.py`). `rtlsdr-tool atn-sample` makes random messages of every
+  CPDLC and CM type as values of the ASN.1 types (so every message element and nested type is exercised, with and without
+  extension alternatives and additions), PER-encodes them with this package's encoder, and wraps them in every layer: X.25 data
+  packets (a third split in two), compressed and full CLNP headers, data, connect, confirm and disconnect TPDUs, the short
+  session form, fully encoded data, association requests and aborts. dumpvdl2, whose decoders asn1c generated from the standard,
+  and this package decode the same frames. Over 4 200 messages (seeds 21 to 25 at 600, 31 to 34 at 300, and more), every message
+  that both read has the same alternatives at every level (modulo naming: dumpvdl2 calls `levelFeet` `feet`, and prints no
+  alternative for latitudes and longitudes), the same strings and the same message numbers; the only ones not compared are
+  context management messages sent as plain data after a connection that only this package remembers. The comparison found three
+  differences between Wireshark's text and what dumpvdl2 (which decodes live traffic) has, all now patched
+  (`ATNSchema.make()`): `TrafficType` has no `noneSpecified (0)`; `LevelSpeed` has one `speed`, not `SpeedSpeed`'s two; and
+  the two modules' `VersionNumber` are different types (a global namespace here let the CPDLC one replace the CM one; every
+  module has its own scope now).
+* **Constraint tables** (`Tools/atn-schema-compare.py`): the PER-visible constraint of every named integer, enumeration, string and
+  SEQUENCE OF type (155 types) is the same as asn1c's, except dumpvdl2's `TrafficType`. Member types of sequences differ in
+  name only (aliases such as `AirportDeparture`) except `LevelSpeed`.
+* **Through the radio path**: `Tools/vdl2-oracle.py --frames` sends such frames as D8PSK bursts and `rtlsdr-tool vdl2` reads them back
+  with the ATN layers decoded.
+* **Unit tests**: PER encodings worked by hand from X.691 (constrained and unconstrained integers, strings, choices ordered
+  by tag or declaration, extensions, enumerations, object identifiers), 1 500 random values of the ATN and ACSE types
+  round-tripped, every X.25 packet type, compressed and full CLNP headers, every TPDU kind, a CPDLC downlink and uplink and
+  CM messages through all the layers, an abort, packets and segments and fragments joined, the connection's application
+  remembered and forgotten, text with units, random bytes never trapping the decoder.
+* **Not done:** ADS-C (ATN B2's ASN.1, `ADSGroundPDUs`, and the FANS-1/A ADS-C and CPDLC that ACARS carries as ARINC 622
+  messages are not in the packaged modules, and the only copies of the schema seen are dumpvdl2's generated code, GPL-3.0),
+  IDRP, CLNP and COTP options (skipped, their length used), the unprotected `GroundPDUs` and `AircraftPDUs` (dumpvdl2 reads only the
+  protected ones either), CPDLC's own integrity checks, and any real traffic. The two schema deviations are what dumpvdl2
+  has, not something confirmed on air.
 
 ## Speed
 
@@ -870,4 +939,8 @@ git clone https://github.com/szpajder/libacars && git clone https://github.com/s
 (cd libacars && cmake -B build && make -C build install) && (cd dumpvdl2 && cmake -B build && make -C build)   # glib 2
 Tools/vdl2-oracle-compare.py rtlsdr-tool dumpvdl2/build/src/dumpvdl2 /tmp/vdl2 --ebn0=20,16,14,13,12,11,10,9   # numpy
 Tools/vdl2-oracle-compare.py rtlsdr-tool dumpvdl2/build/src/dumpvdl2 /tmp/vdl2 --ebn0=20,14,12 --offset 3000 --ppm 50
+Tools/atn-oracle-compare.py rtlsdr-tool dumpvdl2/build/src/dumpvdl2 /tmp/atn --count 600 --seeds 21,22,23 --tally            # CPDLC and CM through every ATN layer, python only
+Tools/atn-oracle-compare.py rtlsdr-tool dumpvdl2/build/src/dumpvdl2 /tmp/atn --count 300 --seeds 31,32 --extensions
+Tools/atn-schema-compare.py rtlsdr-tool dumpvdl2/src/asn1                                                                    # constraints and member types against asn1c's
+rtlsdr-tool atn-sample --count 12 --seed 7 --kinds 0,1,5,2 > frames.jsonl   # then: Tools/vdl2-oracle.py out --frames frames.hex --channels 136.975e6 --center 137e6
 ```
