@@ -261,43 +261,49 @@ struct DFMCodeTests {
         }
     }
 
-    @Test func framesRoundTripThroughTheInterleaver() {
+    @Test func framesRoundTripThroughTheInterleaver() throws {
         let frame = DFMFrameBuilder.frame(channel: 0xa, value: 0xc12345, first: (3, 0x1234_5678_9abc), second: (8, 0x0fed_cba9_8765))
-        let decoded = DFMFrame(soft: frame)
+        let decoded = try DFMFrame(soft: frame)
         #expect(decoded.headerErrors == 0 && decoded.intactBlocks == 3)
         #expect(decoded.config.nibbles == [0xa, 0xc, 1, 2, 3, 4, 5])
         #expect(decoded.data[0].nibbles == [1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 3])
         #expect(decoded.data[1].nibbles == [0, 0xf, 0xe, 0xd, 0xc, 0xb, 0xa, 9, 8, 7, 6, 5, 8])
     }
 
-    @Test func oneBadBitPerCodewordIsRepairedAndCounted() {
+    @Test func aFrameOfTheWrongLengthIsRefused() {
+        for count in [0, DFM.frameBits - 1, DFM.frameBits + 1] {
+            #expect(throws: DFMFrame.Failure.wrongLength(got: count)) { try DFMFrame(soft: [Float](repeating: 1, count: count)) }
+        }
+    }
+
+    @Test func oneBadBitPerCodewordIsRepairedAndCounted() throws {
         var frame = DFMFrameBuilder.frame(channel: 5, value: 0x123456, first: (0, 0xaaaa_5555_aaaa), second: (1, 0x1111_2222_3333))
         // Bit j of codeword i sits at 16 + 7 j + i in the configuration block: damage one bit of each codeword.
         for i in 0..<7 { frame[16 + 7 * (i % 8) + i].negate() }
-        let decoded = DFMFrame(soft: frame)
+        let decoded = try DFMFrame(soft: frame)
         #expect(decoded.config.corrected == 7 && decoded.config.failed == 0)
         #expect(decoded.config.nibbles == [5, 1, 2, 3, 4, 5, 6])
     }
 
-    @Test func twoBadBitsFailUnlessSoftDecisionsPickTheRightNeighbour() {
+    @Test func twoBadBitsFailUnlessSoftDecisionsPickTheRightNeighbour() throws {
         var frame = DFMFrameBuilder.frame(channel: 5, value: 0x123456, first: (0, 0xaaaa_5555_aaaa), second: (1, 0x1111_2222_3333))
         // Two bits of the first configuration codeword (bits 0 and 1 of codeword 0), both only weakly wrong.
         frame[16] = frame[16] > 0 ? -0.3 : 0.3
         frame[16 + 7] = frame[16 + 7] > 0 ? -0.05 : 0.05
-        let plain = DFMFrame(soft: frame)
+        let plain = try DFMFrame(soft: frame)
         #expect(plain.config.failed == 1 && plain.config.nibbles[0] != 5)
-        let repaired = DFMFrame(soft: frame, repairTwoBitErrors: true)
+        let repaired = try DFMFrame(soft: frame, repairTwoBitErrors: true)
         #expect(repaired.config.failed == 0)
         #expect(repaired.config.nibbles == [5, 1, 2, 3, 4, 5, 6])
     }
 }
 
 struct DFMDecoderTests {
-    private func reports(_ flight: DFMFlight, from start: Int = 0) -> [DFMReport] {
+    private func reports(_ flight: DFMFlight, from start: Int = 0) throws -> [DFMReport] {
         let decoder = DFMDecoder()
         var out: [DFMReport] = []
         for (number, soft) in flight.frames().enumerated() where number >= start {
-            if let report = decoder.ingest(DFMFrame(soft: soft), frameCount: Double(number)) { out.append(report) }
+            if let report = try decoder.ingest(DFMFrame(soft: soft), frameCount: Double(number)) { out.append(report) }
         }
         return out
     }
@@ -314,7 +320,7 @@ struct DFMDecoderTests {
     }
 
     @Test func fieldsComeOutAsPutIn() throws {
-        let all = reports(DFMFlight())
+        let all = try reports(DFMFlight())
         let report = try #require(all.last)
         let expected = DFMFlight().position(11)
         #expect(abs(report.latitude - expected.lat) < 1e-7 && abs(report.longitude - expected.lon) < 1e-7)
@@ -334,7 +340,7 @@ struct DFMDecoderTests {
         for mode in [3, 4] {
             var flight = DFMFlight()
             flight.mode = mode
-            let all = reports(flight)
+            let all = try reports(flight)
             let report = try #require(all.last, "mode \(mode)")
             let expected = flight.position(11)
             #expect(abs(report.latitude - expected.lat) < 1e-7 && abs(report.longitude - expected.lon) < 1e-7, "mode \(mode)")
@@ -384,10 +390,10 @@ struct DFMDecoderTests {
         }
     }
 
-    @Test func aWrongTimeIsNotReportedBecauseTheCounterDisagrees() {
+    @Test func aWrongTimeIsNotReportedBecauseTheCounterDisagrees() throws {
         var flight = DFMFlight()
         flight.corruptTime = [6]
-        let all = reports(flight)
+        let all = try reports(flight)
         #expect(!all.contains { $0.gpsSeconds == flight.gpsSeconds(second: 6) + 60 })      // not the time the corruption says
         #expect(!all.contains { $0.gpsSeconds == flight.gpsSeconds(second: 6) })
         #expect(all.contains { $0.gpsSeconds == flight.gpsSeconds(second: 7) }, "reports go on after it")
@@ -395,23 +401,23 @@ struct DFMDecoderTests {
 
     /// A packet lost in the middle of a second must not be made up with the same packet from the second before, even
     /// when the frames' timing puts that one just inside the six frames the packets of a report may span.
-    @Test func aLostPacketIsNotMadeUpWithTheOneFromTheSecondBefore() {
+    @Test func aLostPacketIsNotMadeUpWithTheOneFromTheSecondBefore() throws {
         var flight = DFMFlight()
         flight.lostPackets = [3 * 9 + 4]                           // the altitude of the fourth second
         let decoder = DFMDecoder()
         var all: [DFMReport] = []
         for (number, soft) in flight.frames().enumerated() {
-            if let report = decoder.ingest(DFMFrame(soft: soft), frameCount: Double(number) * 0.98) { all.append(report) }
+            if let report = try decoder.ingest(DFMFrame(soft: soft), frameCount: Double(number) * 0.98) { all.append(report) }
         }
         #expect(!all.contains { $0.gpsSeconds == flight.gpsSeconds(second: 3) })
         #expect(all.count == 11)
         #expect(all.allSatisfy { abs($0.altitude - flight.position($0.gpsSeconds - 1_434_018_020).alt) < 0.006 })
     }
 
-    @Test func aSecondWithAMissingPacketGivesNoReport() {
+    @Test func aSecondWithAMissingPacketGivesNoReport() throws {
         var flight = DFMFlight()
         flight.lostFrames = [10, 11]                    // packets 20 to 23: 2, 3, 4 and 5 of the third second
-        let all = reports(flight)
+        let all = try reports(flight)
         #expect(all.count == 11)
         #expect(!all.contains { $0.gpsSeconds == flight.gpsSeconds(second: 2) })
         #expect(all.allSatisfy { abs($0.latitude - flight.position($0.gpsSeconds - 1_434_018_020).lat) < 1e-7 })

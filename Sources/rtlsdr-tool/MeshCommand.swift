@@ -166,7 +166,8 @@ private func meshMultiple(_ arguments: Arguments, region: MeshtasticRegion) {
         }
     }
     let description = listeners.map { "\($0.preset.rawValue) " + megahertz($0.frequencyHz) }.joined(separator: ", ")
-    let receiver = MeshtasticMultiReceiver(listeners: listeners, capture: capture)
+    let receiver: MeshtasticMultiReceiver
+    do { receiver = try MeshtasticMultiReceiver(listeners: listeners, capture: capture) } catch { fail("\(error)") }
 
     if let path = arguments.option("ifile") {
         guard explicitCenter != nil else { fail("--ifile with --presets needs --center, the frequency the recording was tuned to (and --rate if it is not \(capture.sampleRate / 1e6) MS/s)") }

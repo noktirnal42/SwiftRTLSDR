@@ -42,7 +42,7 @@ struct HostileInputTests {
         return soft
     }
 
-    @Test func dfmDecoderSurvivesValidCodewordsOfRandomData() {
+    @Test func dfmDecoderSurvivesValidCodewordsOfRandomData() throws {
         var rng = Rng(state: 7)
         let decoder = DFMDecoder()
         var reports = 0, outOfRange = 0
@@ -51,7 +51,7 @@ struct HostileInputTests {
             let nibbles = { (c: Int) in (0..<c).map { _ in rng.int(16) } }
             let soft = Self.dfmSoft(config: nibbles(7), data1: nibbles(13), data2: nibbles(13), flips: rng.int(4), rng: &rng)
             for repair in [false, true] {
-                let frame = DFMFrame(soft: soft, repairTwoBitErrors: repair)
+                let frame = try DFMFrame(soft: soft, repairTwoBitErrors: repair)
                 counter = [counter + 1, Double.nan, .infinity, -1, 1e12, Double(n)][rng.int(6)]
                 if let report = decoder.ingest(frame, frameCount: counter) {
                     reports += 1
@@ -65,11 +65,11 @@ struct HostileInputTests {
         #expect(outOfRange == 0, "reports with an impossible position or date were returned")
     }
 
-    @Test func dfmFrameAcceptsAnySoftValues() {
+    @Test func dfmFrameAcceptsAnySoftValues() throws {
         var rng = Rng(state: 11)
         for _ in 0..<5_000 {
             let soft = rng.floats(DFM.frameBits)
-            for repair in [false, true] { let frame = DFMFrame(soft: soft, repairTwoBitErrors: repair); _ = frame.intactBlocks }
+            for repair in [false, true] { let frame = try DFMFrame(soft: soft, repairTwoBitErrors: repair); _ = frame.intactBlocks }
         }
     }
 
@@ -151,7 +151,7 @@ struct HostileInputTests {
                 let capture = try MeshtasticPlan.capture(for: listeners)
                 planned += 1
                 if planned <= 12 {
-                    let receiver = MeshtasticMultiReceiver(listeners: listeners, capture: capture)
+                    let receiver = try MeshtasticMultiReceiver(listeners: listeners, capture: capture)
                     _ = receiver.process(iq: rng.bytes([0, 1, 3, 40_001][rng.int(4)]))
                 }
             } catch { refused += 1 }

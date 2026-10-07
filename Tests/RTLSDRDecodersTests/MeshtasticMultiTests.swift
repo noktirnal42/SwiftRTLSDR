@@ -82,7 +82,7 @@ struct MeshtasticMultiReceiverTests {
     }
 
     /// Three presets of different bandwidths in different places in one 2 MS/s capture, all at once.
-    @Test func severalPresetsAreDecodedFromOneCapture() {
+    @Test func severalPresetsAreDecodedFromOneCapture() throws {
         let rate = 2_000_000.0, tuned = 906.0e6
         let plan: [(MeshtasticPreset, Double, UInt8)] = [(.shortFast, -450_000, 1), (.mediumFast, 150_000, 2), (.shortTurbo, 550_000, 3)]
         let sent = plan.map { [payload($0.2), payload($0.2 &+ 50)] }
@@ -90,7 +90,7 @@ struct MeshtasticMultiReceiverTests {
             channelSignal(entry.0, payloads: sent[index], offset: entry.1, rate: rate, snr: 8, seed: UInt64(index + 1))
         }
         let listeners = plan.map { MeshtasticListener(preset: $0.0, frequencyHz: tuned + $0.1) }
-        let receiver = MeshtasticMultiReceiver(listeners: listeners, sampleRate: rate, centerHz: tuned)
+        let receiver = try MeshtasticMultiReceiver(listeners: listeners, sampleRate: rate, centerHz: tuned)
         let capture = bytes(signals, gain: 6)
         // For trying the command line on the same capture: MESH_MULTI_DUMP=/path swift test --filter severalPresets
         if let path = ProcessInfo.processInfo.environment["MESH_MULTI_DUMP"] { try? Data(capture).write(to: URL(fileURLWithPath: path)) }
@@ -106,7 +106,7 @@ struct MeshtasticMultiReceiverTests {
 
     /// Writes a capture whose channels sit on the US slot grid, for trying `mesh --all-slots` on it:
     /// MESH_GRID_DUMP=/path swift test --filter aGridAlignedCapture. Without the variable it does nothing.
-    @Test func aGridAlignedCaptureForTheCommandLine() {
+    @Test func aGridAlignedCaptureForTheCommandLine() throws {
         guard let path = ProcessInfo.processInfo.environment["MESH_GRID_DUMP"] else { return }
         let rate = 2_000_000.0, tuned = 906.5e6
         let plan: [(MeshtasticPreset, Double, UInt8)] = [(.shortFast, 906.125e6, 1), (.shortSlow, 906.875e6, 2), (.mediumFast, 907.125e6, 3)]
@@ -118,41 +118,50 @@ struct MeshtasticMultiReceiverTests {
 
     /// The same signal heard by two listeners (here, two on nearly the same frequency) is reported once, by the one the
     /// carrier is nearer.
-    @Test func aTransmissionHeardTwiceIsReportedOnce() {
+    @Test func aTransmissionHeardTwiceIsReportedOnce() throws {
         let rate = 1_000_000.0, tuned = 906.0e6
         let sent = [payload(7), payload(8), payload(9)]
         let signal = channelSignal(.shortFast, payloads: sent, offset: 250_000, rate: rate, snr: 6, seed: 5)
         let near = MeshtasticListener(preset: .shortFast, frequencyHz: tuned + 250_000 + 4_000)
         let far = MeshtasticListener(preset: .shortFast, frequencyHz: tuned + 250_000 - 9_000)
-        let frames = run(MeshtasticMultiReceiver(listeners: [far, near], sampleRate: rate, centerHz: tuned), bytes([signal], gain: 10))
+        let frames = run(try MeshtasticMultiReceiver(listeners: [far, near], sampleRate: rate, centerHz: tuned), bytes([signal], gain: 10))
         #expect(frames.map(\.frame.payload) == sent)
         #expect(frames.allSatisfy { $0.listener == near }, "\(frames.map(\.listener.frequencyHz))")
     }
 
     /// A strong signal leaks into the slots either side: their listeners must not report it, or what is left of it.
-    @Test func aStrongSignalDoesNotLeaveFramesOnTheNeighbouringSlots() {
+    @Test func aStrongSignalDoesNotLeaveFramesOnTheNeighbouringSlots() throws {
         let rate = 1_000_000.0, tuned = 906.0e6
         let sent = [payload(31), payload(32), payload(33)]
         let signal = channelSignal(.shortSlow, payloads: sent, offset: 250_000, rate: rate, snr: 25, seed: 17)
         let listeners = [-250_000.0, 0, 250_000, 500_000].filter { abs($0) >= 150_000 || $0 == 0 }.map {
             MeshtasticListener(preset: .shortSlow, frequencyHz: tuned + $0)
         }
-        let frames = run(MeshtasticMultiReceiver(listeners: listeners, sampleRate: rate, centerHz: tuned), bytes([signal], gain: 3))
+        let frames = run(try MeshtasticMultiReceiver(listeners: listeners, sampleRate: rate, centerHz: tuned), bytes([signal], gain: 3))
         #expect(frames.map(\.frame.payload) == sent && frames.allSatisfy { $0.frame.crcValid == true }, "\(frames.map { ($0.listener.frequencyHz, $0.frame.crcValid) })")
     }
 
     /// A channelizer must not cost the receiver its sensitivity: a weak signal (SNR in the LoRa bandwidth below zero)
     /// still comes through.
-    @Test func aWeakSignalSurvivesTheChannelizer() {
+    @Test func aWeakSignalSurvivesTheChannelizer() throws {
         let rate = 2_000_000.0, tuned = 906.0e6
         let sent = [payload(21), payload(22)]
         let signal = channelSignal(.shortFast, payloads: sent, offset: -300_000, rate: rate, snr: -4, seed: 11)
         let listener = MeshtasticListener(preset: .shortFast, frequencyHz: tuned - 300_000)
-        let frames = run(MeshtasticMultiReceiver(listeners: [listener], sampleRate: rate, centerHz: tuned), bytes([signal], gain: 4))
+        let frames = run(try MeshtasticMultiReceiver(listeners: [listener], sampleRate: rate, centerHz: tuned), bytes([signal], gain: 4))
         #expect(frames.map(\.frame.payload) == sent)
     }
 
-    @Test func noiseAloneGivesNoFrames() {
+    /// A rate that is not a whole multiple of a listener's bandwidth is refused instead of trapping.
+    @Test func aRateThatDoesNotHoldTheBandwidthIsRefused() {
+        let listener = MeshtasticListener(preset: .shortFast, frequencyHz: 906.0e6)      // 250 kHz
+        for rate in [1_100_000.0, 100_000, 0, .nan, .infinity] {
+            #expect(throws: MeshtasticMultiReceiver.Failure.self) { try MeshtasticMultiReceiver(listeners: [listener], sampleRate: rate, centerHz: 906.0e6) }
+        }
+        #expect(throws: Never.self) { try MeshtasticMultiReceiver(listeners: [listener], sampleRate: 1_000_000, centerHz: 906.0e6) }
+    }
+
+    @Test func noiseAloneGivesNoFrames() throws {
         var state: UInt64 = 123
         func uniform() -> Double {
             state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
@@ -160,6 +169,6 @@ struct MeshtasticMultiReceiverTests {
         }
         let noise = (0..<(2 * 2_000_000)).map { _ in UInt8(max(0, min(255, (127.5 + 12 * (-2 * log(uniform())).squareRoot() * cos(2 * Double.pi * uniform())).rounded()))) }
         let listeners = [MeshtasticListener(preset: .shortFast, frequencyHz: 906.2e6), MeshtasticListener(preset: .longFast, frequencyHz: 905.7e6)]
-        #expect(MeshtasticMultiReceiver(listeners: listeners, sampleRate: 2_000_000, centerHz: 906.0e6).process(iq: noise).isEmpty)
+        #expect(try MeshtasticMultiReceiver(listeners: listeners, sampleRate: 2_000_000, centerHz: 906.0e6).process(iq: noise).isEmpty)
     }
 }

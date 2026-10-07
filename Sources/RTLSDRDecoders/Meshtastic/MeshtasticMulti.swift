@@ -99,6 +99,19 @@ public enum MeshtasticPlan {
 /// reads the result. A transmission heard on neighbouring channels (a strong signal leaks over) is reported once, by the
 /// listener whose centre it is nearest, and only once if the same payload comes again within a second.
 public final class MeshtasticMultiReceiver: @unchecked Sendable {
+    /// Why a receiver could not be made for a capture.
+    public enum Failure: Error, CustomStringConvertible, Equatable {
+        /// A listener's bandwidth does not divide the capture's sample rate into a whole number of samples a chip.
+        case rateNotMultipleOfBandwidth(sampleRate: Double, bandwidth: Double)
+        public var description: String {
+            switch self {
+            case .rateNotMultipleOfBandwidth(let rate, let bandwidth):
+                return String(format: "a capture at %.0f S/s cannot hold a %.1f kHz channel: the rate must be a whole multiple of the bandwidth",
+                              rate, bandwidth / 1000)
+            }
+        }
+    }
+
     private final class Channel: @unchecked Sendable {
         let listener: MeshtasticListener
         let receiver: LoRaReceiver
@@ -111,10 +124,13 @@ public final class MeshtasticMultiReceiver: @unchecked Sendable {
         private let rotation: (Double, Double)
         private var rotations = 0
 
-        init(listener: MeshtasticListener, inputRate: Double, tunedHz: Double) {
+        init(listener: MeshtasticListener, inputRate: Double, tunedHz: Double) throws {
             self.listener = listener
             let bandwidth = listener.bandwidth
-            precondition(abs((inputRate / bandwidth).rounded() * bandwidth - inputRate) < 1, "the capture rate must be a multiple of the bandwidth")
+            guard inputRate.isFinite, bandwidth > 0, (inputRate / bandwidth).rounded() >= 1,
+                  abs((inputRate / bandwidth).rounded() * bandwidth - inputRate) < 1 else {
+                throw Failure.rateNotMultipleOfBandwidth(sampleRate: inputRate, bandwidth: bandwidth)
+            }
             // The largest decimation that leaves two or more samples a chip, a whole number of them.
             let ratio = Int((inputRate / bandwidth).rounded())
             var best = 1
@@ -205,16 +221,17 @@ public final class MeshtasticMultiReceiver: @unchecked Sendable {
     private var recent: [(payload: [UInt8], sample: Double, listener: Int)] = []
     private var inputSamples = 0.0
 
-    /// Listeners for I/Q at `sampleRate` tuned to `centerHz`.
-    public init(listeners: [MeshtasticListener], sampleRate: Double, centerHz: Double) {
+    /// Listeners for I/Q at `sampleRate` tuned to `centerHz`. Throws `Failure.rateNotMultipleOfBandwidth` when the rate
+    /// is not a whole multiple of a listener's bandwidth.
+    public init(listeners: [MeshtasticListener], sampleRate: Double, centerHz: Double) throws {
         self.sampleRate = sampleRate
         self.centerHz = centerHz
-        channels = listeners.map { Channel(listener: $0, inputRate: sampleRate, tunedHz: centerHz) }
+        channels = try listeners.map { try Channel(listener: $0, inputRate: sampleRate, tunedHz: centerHz) }
     }
 
     /// A receiver for a capture planned by `MeshtasticPlan`.
-    public convenience init(listeners: [MeshtasticListener], capture: MeshtasticPlan.Capture) {
-        self.init(listeners: listeners, sampleRate: capture.sampleRate, centerHz: capture.centerHz)
+    public convenience init(listeners: [MeshtasticListener], capture: MeshtasticPlan.Capture) throws {
+        try self.init(listeners: listeners, sampleRate: capture.sampleRate, centerHz: capture.centerHz)
     }
 
     public var listeners: [MeshtasticListener] { channels.map(\.listener) }

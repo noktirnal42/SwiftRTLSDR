@@ -77,6 +77,15 @@ public struct DFMFrame: Sendable {
         var bits: DFMBits { DFMBits(nibbles: nibbles) }
     }
 
+    public enum Failure: Error, CustomStringConvertible, Equatable {
+        case wrongLength(got: Int)
+        public var description: String {
+            switch self {
+            case .wrongLength(let got): return "a DFM frame is \(DFM.frameBits) soft bits, not \(got)"
+            }
+        }
+    }
+
     /// Whether the header, as received, was the DFM header (a sanity check on the timing; the receiver already
     /// correlated it).
     public var headerErrors: Int
@@ -86,8 +95,9 @@ public struct DFMFrame: Sendable {
     /// Reads a frame from 280 soft bits. With `repairTwoBitErrors`, a codeword with two bad bits is replaced by the
     /// nearest of its four equally distant neighbours, which is right about half the time: a weak signal gets more
     /// frames, and the frames cannot be trusted as far.
-    public init(soft: [Float], repairTwoBitErrors: Bool = false) {
-        precondition(soft.count == DFM.frameBits)
+    /// Throws `Failure.wrongLength` unless there are exactly `DFM.frameBits` of them.
+    public init(soft: [Float], repairTwoBitErrors: Bool = false) throws {
+        guard soft.count == DFM.frameBits else { throw Failure.wrongLength(got: soft.count) }
         var errors = 0
         for k in 0..<DFM.headerBits {
             let expected = (DFM.headerWord >> (DFM.headerBits - 1 - k)) & 1

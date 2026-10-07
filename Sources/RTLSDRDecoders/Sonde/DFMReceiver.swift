@@ -133,8 +133,8 @@ public final class DFMFrameSync {
             let second = buffer.symbol(start + Double(2 * k + 1) * samplesPerSymbol)
             soft[k] = Float(second - first) * polarity
         }
-        let frame = DFMFrame(soft: soft, repairTwoBitErrors: repairTwoBitErrors)
-        guard frame.intactBlocks >= minimumIntact else { return nil }
+        guard let frame = try? DFMFrame(soft: soft, repairTwoBitErrors: repairTwoBitErrors),
+              frame.intactBlocks >= minimumIntact else { return nil }
         let mean = buffer.meanFrequency(from: start, to: start + frameSpan)
         let stream = Double(buffer.base) + start
         return Found(frame: frame, sampleIndex: stream, frameCount: stream / frameSpan, correlation: abs(r), inverted: r < 0, mean: mean)
