@@ -503,7 +503,7 @@ How it was checked:
 
   No frame was ever wrong (the check sequence accepted nothing that was not sent), and every JSON field agrees with pyais (it
   maps a reserved ship type to another of its class, and gives the rate of turn converted). A real receiver is specified for
-  20 % loss at about 15-17 dB over thermal noise in this bandwidth; this one is at 10 % at 16 dB and 30 % at 14 dB. A carrier 4
+  20 % loss at about 15-17 dB over thermal noise in this bandwidth; this one loses about 5 % at 16 dB and 20-30 % at 14 dB. A carrier 4
   kHz off, an inverted signal and both together all decode at 25 dB; at 16 dB an offset of 3.5 kHz costs about half the
   frames (the ±8 kHz channel clips the signal), because the first frame is what re-tunes the receiver. On noise alone the header
   correlation fires about once a second (the "headers without a frame" count) and nothing is ever decoded.
