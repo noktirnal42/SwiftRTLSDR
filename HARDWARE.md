@@ -61,6 +61,30 @@ hardware. The command in the right-hand column is the check to run. Please add t
 | Hydrogen line (`hline`) | With a dish or horn and an LNA (and its power), pointing at the Milky Way: the ratio shows the line near 1420.4 MHz, moving with pointing and over the year as the LSR column predicts; pointing away gives a flat ratio. Without them, a flat ratio (no false line from the bandpass or the DC spike) | `rtlsdr-tool hline --seconds 1800 --lat <yours> --lon <yours> --az <A> --el <E>` |
 | Meteor-M LRPT decoder | During a pass (predict one with any satellite tracker; Meteor-M N2-3 and N2-4 are on 137.9 or 137.1 MHz) the dashboard locks, frames decode and the image builds; the 288 kS/s rate streams without dropped blocks; compare with SatDump on a `capture` of the same pass. A 137 MHz antenna (V-dipole or QFH) is needed; a whip rarely gets a usable signal | `rtlsdr-tool meteor --web 8080 --out pass/` (`--freq 137.1e6` if needed; `--symbol-rate 80000` for a pass in the 80k mode, whose frames start about 18 s in), or `capture --freq 137.9e6 --rate 288000` then `meteor --ifile` |
 
+## Run on the dongle 2026-10-07
+
+Same dongle as above (R820T, serial `00000001`), now with a small antenna attached (an FM broadcast scan finds two
+carriers, 95.999 and 105.599 MHz, at 17-21 dB SNR; no 1090 MHz, VHF-aviation or 403 MHz antenna). Apple silicon Mac,
+macOS 27, Swift 6.4. The package builds on macOS with no warnings or errors and all 196 tests pass there (the first
+macOS build of the DFM, M10, ACARS, VDL2 and multi-preset Meshtastic code). Release build (`swift build -c release`)
+for everything that streams: the debug build cannot keep up with a five-channel ACARS capture.
+
+| Check | Result |
+|---|---|
+| `lockscan --fast` | Locked at all 349 points, none failed; mean retune **11.7 ms**, slowest 30 ms |
+| `retunebench` (shortcuts off / on) | Small steps 27.2 / **11.8 ms**; band hops 31.4 / **16.0 ms**; never unlocked in 200 retunes. While streaming: 26.0 / 11.4 and 30.2 / 15.5 ms |
+| Level and spur with the shortcuts | FM carrier at 96 MHz, 2 s capture each way: -39.7 vs -39.9 dBFS, 43.4 vs 43.7 dB over the median; no change beyond noise |
+| `scan --from 88e6 --to 108e6` | Two carriers found, at 95.9992 and 105.5992 MHz (the station frequencies less about 0.8 kHz, within a 2.3 kHz bin; the DC spike at hop centres produced no false detection) |
+| `monitor --guard`, `--agc -25` | Idle behaviour only: the level holds and the AGC settles to -25 dBFS in about 5 s without hunting. **The backoff on a strong signal was not exercised** (nothing strong enough) |
+| EEPROM read | `rtlsdr-tool eeprom` is **byte for byte identical** to `rtl_eeprom -r` (256 bytes) |
+| `rtl_tcp` server | A client speaking the protocol gets the `RTL0` header (tuner type 5, 29 gains), tunes, sets the rate and gain, and receives 4.09 MB/s (nominal 4.10) for 3 s. SDR#, GQRX and SDR++ were not tried |
+| ACARS, 5 US channels at 2.4 MS/s | No dropped blocks over 90 s in a release build. **No message was received** (no antenna for 131 MHz) |
+| VDL Mode 2, 4 US channels at 1.05 MS/s | No dropped blocks over 60 s; no frame received |
+| ADS-B | No aircraft in 60 s (no 1090 MHz antenna) |
+| `sonde --scan` 400-406 MHz | Two steady carriers (403.199 and 405.400 MHz) found, tried with RS41, DFM and M10 and rejected; neither is a sonde. **No sonde was in range**, so no decoder has still received a real signal, and the DFM and M10 deviations (±2.4, ±4.32 kHz) remain unconfirmed |
+
+Not run: serial provisioning, calibration (no reference), UAT, ISM, Meshtastic, Meteor, hydrogen line.
+
 ## Not tested
 
 * Any other dongle: RTL-SDR Blog V3 (bias tee is driven on GPIO 0 but was only exercised against the fake dongle),
