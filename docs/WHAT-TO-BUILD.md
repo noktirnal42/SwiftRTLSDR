@@ -96,7 +96,7 @@ These are specific to what the measurements in this repo showed.
 | Radio astronomy (21 cm hydrogen line, 1420.4058 MHz) | A WiFi dish + LNA + RTL-SDR drift scan shows the line and its Doppler shift ([RTL-SDR.com](https://www.rtl-sdr.com/cheap-and-easy-hydrogen-line-radio-astronomy-with-a-rtl-sdr-wifi-parabolic-grid-dish-lna-and-sdrsharp/)) | `[exists]` Needs an LNA and a dish; the bare dongle is not enough. The software side is here: a frequency-switched long-integration spectrometer with LSR velocities, `rtlsdr-tool hline` (CSV out) |
 | Direction finding, passive radar | KrakenSDR/KerberosSDR (coherent, shared clock); passive radar uses FM/DAB/DVB-T broadcasts as illuminators ([RTL-SDR.com](https://www.rtl-sdr.com/measuring-traffic-in-a-neighborhood-with-kerberossdr-and-passive-radar/)) | `[needs mod]` Impossible with one ordinary dongle |
 
-Also commonly done but **not researched here**: FLEX pagers, AIS ships, DAB+, GNSS. (POCSAG pagers have since been decoded: `rtlsdr-tool pager`, see [DECODERS.md](DECODERS.md).)
+Also commonly done but **not researched here**: FLEX pagers, DAB+, GNSS. (POCSAG pagers and AIS ships have since been decoded: `rtlsdr-tool pager`, `rtlsdr-tool ais`, see [DECODERS.md](DECODERS.md).)
 
 ## 6. Where to start
 

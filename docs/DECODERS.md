@@ -465,6 +465,57 @@ How it was checked:
 * **Not done:** FLEX and the other pager systems; character sets other than ASCII (multimon-ng has national ones); the
   Skyper format; message continuation across transmissions; real traffic.
 
+### Ships (AIS)
+
+AIS sends GMSK (BT 0.4) at 9600 bit/s, ±2.4 kHz, in 26.7 ms slots on 161.975 MHz (channel A) and 162.025 MHz (channel B),
+25 kHz wide. A burst is a clock of 24 bits (0101…), a flag (0x7E), the message and a 16-bit frame check sequence (the X.25
+CRC that AVLC uses, sent low byte first and each byte least significant bit first), a flag, all in HDLC (a 0 stuffed after
+five 1s) and NRZI (a 0 is a change of frequency, a 1 none, so polarity does not matter). A message's fields are read most
+significant bit first from the bits in the order they were sent; the NMEA sentence `!AIVDM,…` carries those bits six at
+a time as characters. The tables are ITU-R M.1371 as gpsd's AIVDM documentation lays them out; pyais is the oracle.
+
+* **Channels** (`AISReceiver`). Each channel is its own `FMFrontEnd` at about 120 kHz (twelve and a half samples a symbol)
+  with a ±8 kHz low-pass, 25 kHz either side of a capture tuned to 162.000 MHz (clear of the DC spike); the carrier search is
+  off and each frame found re-tunes by the offset it measured.
+* **Frames** (`AISFrameSync`). The header (clock and flag, 32 symbols as the line carries them) is found by a Pearson
+  correlation of the symbol integrals; its mean is the carrier offset the symbols are read against. Each bit is whether a
+  symbol repeats the one before; the stuffing is dropped, a flag ends the frame and the frame check sequence accepts it. One
+  grid for the whole frame (a clock 50 parts per million off drifts a twentieth of a symbol in a thousand bits).
+* **Messages** (`AISMessage`). Position reports (1, 2, 3), base station time (4, 11), static and voyage data (5), class B
+  position (18, 19), aids to navigation (21), class B static data (24 parts A and B); the other types give their number and
+  MMSI. Output is a line, the NMEA sentences (`--nmea`: sentences of 60 payload characters at most, a multipart message
+  numbered) or a JSON object with pyais's field names.
+
+How it was checked:
+
+* **Synthetic signals only.** `Tools/ais-oracle.py` builds messages of the types above field by field from the tables and
+  sends them as bursts (clock, flags, stuffing, check sequence, NRZI, Gaussian-filtered GMSK) on A and on B in a 240 kS/s
+  capture, with noise. pyais decodes all of the sentences it makes with every field as built (the generator's
+  layout agrees with pyais's); two sentences from gpsd's documentation (a type 1 and the two-part type 5 of "MT.MITCHELL") are
+  in the unit tests with the values pyais reads from them, and the type 1 sentence comes back from this package's NMEA
+  output character for character. `Tools/ais-oracle-compare.py` runs this decoder starting blind (no other AIS demodulator
+  was available to compare with) and checks the bits against what was sent and the JSON against pyais's reading of the
+  sentences. Messages out of 36, three seeds, by carrier-to-noise ratio in 25 kHz:
+
+  | CNR (dB) | 30 | 20 | 18 | 16 | 14 | 12 |
+  |---|---|---|---|---|---|---|
+  | this receiver | 36, 36, 36 | 36, 36, 36 | 36, 36, 36 | 35, 34, 33 | 25, 26, 29 | 9, 7, 15 |
+
+  No frame was ever wrong (the check sequence accepted nothing that was not sent), and every JSON field agrees with pyais (it
+  maps a reserved ship type to another of its class, and gives the rate of turn converted). A real receiver is specified for
+  20 % loss at about 15-17 dB over thermal noise in this bandwidth; this one is at 10 % at 16 dB and 30 % at 14 dB. A carrier 4
+  kHz off, an inverted signal and both together all decode at 25 dB; at 16 dB an offset of 3.5 kHz costs about half the
+  frames (the ±8 kHz channel clips the signal), because the first frame is what re-tunes the receiver. On noise alone the header
+  correlation fires about once a second (the "headers without a frame" count) and nothing is ever decoded.
+* **Unit tests**: bits read as unsigned and signed fields, the six-bit armour and its fill bits, text with `@` padding;
+  the two published sentences; class B static (both parts) and an aid to navigation; unavailable values as nil; short and
+  unknown messages; the JSON; frames with a good and a damaged check sequence; stuffing across runs of ones; bursts on both
+  channels in the order they were heard, a mistuned carrier, inverted polarity, a neighbour channel not heard twice, noise
+  alone, FM audio at 48 and 96 kHz and the refusal of the wrong input.
+* **Not done:** the other message types (binary messages 6, 8 and 25-26 with their application data, safety messages,
+  type 9 aircraft, 14, 27 long-range), a timing loop (a very long frame at a poor clock would drift), a proper
+  maximum-likelihood detector for the GMSK (worth a few dB), a real signal.
+
 ### Radiosondes (InterMet iMet-1 and iMet-4)
 
 The iMet is different from the other three: it sends no serial number and no bit-level coding of its own. Its carrier is

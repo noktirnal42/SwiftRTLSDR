@@ -40,6 +40,8 @@ usage:
                    [--gain auto|<dB>] [--ppm N|eeprom] [--seconds N] [--ifile FILE [--center <Hz>]]
   rtlsdr-tool pager [--baud 512|1200|2400|all] [--mode standard|auto|numeric|alpha] [--partial] [--search] [--cutoff <Hz>] [--json] [--wav FILE | --ifile FILE [--rate 240000] [--offset <Hz>] | --freq <Hz>]
                     [--gain auto|<dB>] [--ppm N|eeprom] [--seconds N]
+  rtlsdr-tool ais [--channel a|b|both] [--rate 240000] [--center 162e6] [--json | --nmea] [--cutoff <Hz>] [--wav FILE | --ifile FILE]
+                  [--gain auto|<dB>] [--ppm N|eeprom] [--seconds N]
   rtlsdr-tool mesh [--preset LongFast | --presets LongFast,MediumFast,... [--all-slots] [--center <Hz>]] [--region US] [--slot N | --freq <Hz>] [--primary NAME[:KEY]] [--channel NAME[:KEY]]...
                    [--ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>]] [--json] [--verbose] [--gain auto|<dB>] [--ppm 0] [--seconds N]
   rtlsdr-tool serve [--address 127.0.0.1] [--port 1234] [--rate 2048000] [--freq 100e6] [--gain auto|<dB>] [--allow-bias-tee] [--fast]
@@ -168,6 +170,8 @@ case "vdl2":
     vdl2(arguments)
 case "pager":
     pager(arguments)
+case "ais":
+    ais(arguments)
 
 default:
     print(usage)
