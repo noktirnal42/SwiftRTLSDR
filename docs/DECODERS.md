@@ -9,10 +9,10 @@ published messages and recordings made with other receivers. The on-air checks a
 | | Mode S / ADS-B | UAT | ISM sensors | Meteor-M LRPT | Radiosondes | Meshtastic (LoRa) | ACARS | VDL Mode 2 |
 |---|---|---|---|---|---|---|---|---|
 | Frequency, sample rate | 1090 MHz, 2 MS/s | 978 MHz (US only), 2.083334 MS/s | 433.92 MHz (also 315, 868, 915), 250 kS/s | 137.9 or 137.1 MHz, 288 kS/s (any rate over twice the symbol rate) | 400-406 MHz, 240 kS/s (RS41 and DFM: any rate from 48 kS/s; M10/M20 at 288 kS/s: any rate from 96 kS/s), or FM audio | The slot Meshtastic picks for the preset and channel (US LongFast: 906.875 MHz), 1 MS/s (any multiple of the LoRa bandwidth) | 131.550, 131.125 MHz … (US), 131.525, 131.725, 131.825 MHz (Europe): several channels from one capture at 2.4 MS/s (any multiple of 12.5 kHz), or AM audio | 136.975 MHz (everywhere) and the regional ones (136.725 … 136.875 in Europe, 136.650 … 136.800 in the US), several from one capture at 1.05 MS/s (any multiple of 42 kHz) |
-| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41, Graw DFM-06/09/17 and Meteomodem M10/M20 weather balloons: position, altitude, velocity, temperature, serial, battery | Meshtastic mesh traffic on the default channel and any channel whose key is given: text messages, positions, node info, telemetry, traceroutes, neighbour lists, acknowledgements; any LoRa frame with an explicit header (one preset on one slot, or several presets and slots from one capture) | Airline operations messages between aircraft and ground: positions, out/off/on/in times, weather requests, free text; registration, flight number, label, message number | The digital successor of ACARS: AVLC frames between aircraft and ground stations, carrying ACARS, ground stations' announcements (GSIF), aircraft logging on with their position and destination, and ATN traffic (CPDLC, ADS-C) |
-| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame formats as rs1729's RS project documents them (GPL-3.0, read for format facts only); its rs41mod, dfm09mod and m10m20mod as oracles | Written for this package: LoRa coding from the format as gr-lora_sdr implements it, Meshtastic from its firmware and protobuf definitions (all GPL-3.0, read for format facts only); gr-lora_sdr as oracle | Written for this package: the frame format and the demodulator's method as acarsdec documents and implements them (LGPL-2.0, read, not copied); acarsdec as oracle | Written for this package from the format as dumpvdl2 implements it (GPL-3.0, read for format facts only); dumpvdl2 as oracle |
-| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--symbol-rate 72000\|80000] [--web PORT]` | `rtlsdr-tool sonde [--type rs41\|dfm\|m10] [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` | `rtlsdr-tool mesh [--preset LongFast] [--region US] [--channel NAME:KEY] [--ifile FILE] [--json]`; `rtlsdr-tool lora --ifile FILE` for plain LoRa; `--presets LongFast,MediumFast,...` (`--all-slots --center HZ`) for several at once | `rtlsdr-tool acars [--region us\|eu \| --freq MHZ,...] [--ifile FILE [--center HZ] \| --wav FILE] [--json]` | `rtlsdr-tool vdl2 [--region eu\|us \| --freq MHZ,...] [--ifile FILE [--center HZ]] [--json] [--raw]` |
-| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod, dfm09mod and m10m20mod `--json` (the JSON lines radiosonde_auto_rx reads) | One line, or one JSON object, a packet; field names follow Meshtastic's protobufs | acarsdec `-o 4` (its JSON fields, same values) | dumpvdl2's JSON (`vdl2`/`avlc` objects, the fields this decoder knows), or its raw frames |
+| What it carries | Airliner and GA transponders: identity, position, altitude, velocity, squawk | GA ADS-B, and from ground stations FIS-B: NEXRAD radar mosaics, METAR/TAF/winds text, NOTAMs, airspace status | Weather stations, thermometers, remotes: 11 rtl_433 protocols, 50-odd models (below) | Weather-satellite images: the MSU-MR imager's three daytime (or night-time infrared) channels, 1568 pixels a line, about 1 km each | Vaisala RS41, Graw DFM-06/09/17, Meteomodem M10/M20 and InterMet iMet-1/iMet-4 weather balloons: position, altitude, velocity, temperature, serial, battery (the iMet: pressure, temperature, humidity and any attached instrument's data instead of a serial) | Meshtastic mesh traffic on the default channel and any channel whose key is given: text messages, positions, node info, telemetry, traceroutes, neighbour lists, acknowledgements; any LoRa frame with an explicit header (one preset on one slot, or several presets and slots from one capture) | Airline operations messages between aircraft and ground: positions, out/off/on/in times, weather requests, free text; registration, flight number, label, message number | The digital successor of ACARS: AVLC frames between aircraft and ground stations, carrying ACARS, ground stations' announcements (GSIF), aircraft logging on with their position and destination, and ATN traffic (CPDLC, ADS-C) |
+| Written from | The public protocol description (ICAO Annex 10 Vol. IV, as laid out in *The 1090 MHz Riddle*) | A port of dump978 by Oliver Jowett (GPL-2.0-or-later); the formal UAT specifications are not public | A port of rtl_433 25.02 (GPL-2.0-or-later): its baseband, pulse detector, slicers, bit buffer and device decoders | A port of meteor_demod and meteor_decode by dbdexter-dev (MIT), with a new carrier acquisition and marker search (below); SatDump 1.2.2 as oracle only | Written for this package from the frame formats as rs1729's RS project documents them (GPL-3.0, read for format facts only); its rs41mod, dfm09mod and m10m20mod as oracles; the iMet from NOAA's published packet protocol, with imet1rs_dft as oracle | Written for this package: LoRa coding from the format as gr-lora_sdr implements it, Meshtastic from its firmware and protobuf definitions (all GPL-3.0, read for format facts only); gr-lora_sdr as oracle | Written for this package: the frame format and the demodulator's method as acarsdec documents and implements them (LGPL-2.0, read, not copied); acarsdec as oracle | Written for this package from the format as dumpvdl2 implements it (GPL-3.0, read for format facts only); dumpvdl2 as oracle |
+| Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--symbol-rate 72000\|80000] [--web PORT]` | `rtlsdr-tool sonde [--type rs41\|dfm\|m10\|imet] [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` | `rtlsdr-tool mesh [--preset LongFast] [--region US] [--channel NAME:KEY] [--ifile FILE] [--json]`; `rtlsdr-tool lora --ifile FILE` for plain LoRa; `--presets LongFast,MediumFast,...` (`--all-slots --center HZ`) for several at once | `rtlsdr-tool acars [--region us\|eu \| --freq MHZ,...] [--ifile FILE [--center HZ] \| --wav FILE] [--json]` | `rtlsdr-tool vdl2 [--region eu\|us \| --freq MHZ,...] [--ifile FILE [--center HZ]] [--json] [--raw]` |
+| Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod, dfm09mod, m10m20mod and imet1rs_dft `--json` (the JSON lines radiosonde_auto_rx reads) | One line, or one JSON object, a packet; field names follow Meshtastic's protobufs | acarsdec `-o 4` (its JSON fields, same values) | dumpvdl2's JSON (`vdl2`/`avlc` objects, the fields this decoder knows), or its raw frames |
 
 ## How they were checked
 
@@ -410,6 +410,67 @@ How it was checked:
   frame (the signal levels: it is recognised and skipped), the M2K2's own differences (it is read as an M10 with its time
   left in GPS), and the M10+'s time and date are checked on synthetic frames only.
 
+### Radiosondes (InterMet iMet-1 and iMet-4)
+
+The iMet is different from the other three: it sends no serial number and no bit-level coding of its own. Its carrier is
+frequency-modulated by audio that is Bell 202 frequency shift keying (1200 Hz for a 1, 2200 Hz for a 0, 1200 baud), and
+the audio carries asynchronous 8N1 characters (a start bit, eight data bits least significant first, a stop bit), idle
+at 1200 Hz between frames. A frame is a second of telemetry: packets one after the other, each starting with the byte
+0x01 and an identifier: GPS (0x02, 18 bytes) or extended GPS (0x05, 30, with velocity), PTU (0x01, 14) or extended PTU
+(0x04, 20, with the sonde's internal, pressure-sensor and humidity-sensor temperatures), and XDATA (0x03, `N + 5`) for
+attached instruments. Every packet ends with a CRC-16 (polynomial 0x1021, started from 0x1D0F, sent most significant
+byte first) over its bytes from the 0x01 on. The layouts are from NOAA's "iMet-1-RSB Radiosonde Protocol" (Wendell and
+Jordan, version 1.11, 2009); the CRC's seed and byte order and the float format are from rs1729's imet1rs_dft, which
+decodes real flights (GPL-3.0, read for these facts only).
+
+* **Channel and detection.** The FM front end at 48 kHz with a ±5 kHz low-pass (`--cutoff 7000` for a sonde that
+  deviates more than about ±3.5 kHz), the carrier search and the fine tuning from each frame as for the others. The
+  discriminator's audio goes through a two-tone detector: running correlations with the 1200 and 2200 Hz tones over one
+  bit, their magnitudes' difference, after a slow average is taken off the audio (a carrier that is off frequency puts a
+  constant into the discriminator, which leaks into the 2200 Hz tone's correlation).
+* **Frames.** The header is 20 idle bits and the first character, found by a correlation over its 30 bits. Each later
+  character is aligned afresh, at the offset within half a bit of where the last ended that puts its start bit at the
+  space tone and its stop bit at the mark tone with the most energy between: the sonde's clock and the receiver's differ
+  and a frame is up to a thousand bits long. The frame ends where the line goes idle. A packet is accepted by its CRC; a
+  packet that fails ends the frame and keeps the ones before it.
+* **Reports.** A report needs the GPS packet (position, altitude, satellites, time of day: the packet has no date); the
+  JSON line imet1rs_dft prints is given when the PTU packet (the frame number, pressure, temperature, humidity, battery)
+  came through too, otherwise only the readable line. XDATA is kept as hexadecimal in `aux`, an ozonesonde's packet is
+  also read (cell current, pump temperature, pump current, battery). The humidity and pressure scale factors and the
+  hygrometer's packets are not interpreted.
+
+How it was checked:
+
+* **No real recording**, as for the DFM and M10: `Tools/imet-oracle.py` builds frames from the protocol (its own CRC and
+  framing), sends them as AFSK on an FM carrier with noise, and writes the I/Q and, from the same noisy samples through
+  a discriminator, 48 kHz FM audio. imet1rs_dft decodes the audio and every field it reports (position, altitude,
+  satellites, time, packet number, pressure, temperature, humidity, battery, the ozonesonde's readings) is as sent;
+  `Tools/imet-oracle-compare.py` runs it and this decoder (on the I/Q, starting blind) and checks each against what was
+  sent. Frames out of 60 at 240 kS/s, two seeds, one frame a second, by carrier-to-noise ratio in 10 kHz:
+
+  | CNR (dB) | 25 | 14 | 11 | 10 | 9 | 8 | 7 |
+  |---|---|---|---|---|---|---|---|
+  | this receiver | 60, 60 | 60, 60 | 60, 59 | 58, 57 | 52, 49 | 30, 29 | 1, 6 |
+  | imet1rs_dft | 60, 60 | 60, 60 | 59, 59 | 57, 57 | 49, 47 | 28, 26 | 4, 5 |
+
+  No report from either had a wrong field at any level. On the same 48 kHz audio this decoder's bit decisions give as
+  many frames as imet1rs_dft's (29 against 28 at 8 dB); the I/Q front end's cutoff was chosen on these signals (5 kHz:
+  at 6 kHz it gave 12 and 15 frames at 8 dB, at 8 kHz none). Other conditions, frames out of 20 or 30 at 20 and 12 dB:
+  carrier at −4.5 kHz and +5.5 kHz all of them (imet1rs_dft too); deviation 2 and 4 kHz all of them (imet1rs_dft 27 of
+  30 at 2 kHz and 12 dB); **a baud rate 0.4 % off (1195 or 1206) all of them (imet1rs_dft none: its bit clock is fixed
+  from the first edge)**; extended GPS and PTU packets and an XDATA packet all of them (imet1rs_dft reads the extended
+  GPS packet's fields but checks its CRC at the short packet's place, so it never accepts one); deviation 5 kHz needs
+  `--cutoff 7000`.
+* **Unit tests**: the CRC's check value; every field of each packet type, in extended form too, with negative
+  temperatures, southern and western positions and an altitude below sea level; a frame that imet1rs_dft accepts with all
+  three checksums good, read as it reads it; a damaged packet ending its frame; cut-off frames; instrument data and an
+  ozonesonde; the JSON text; a position off the globe; the receiver on FM audio at 22.05, 44.1, 48 and 96 kHz with and
+  without a discriminator offset, with the baud rate 0.5 % off either way, on I/Q at an offset and far off centre, a
+  damaged frame lost and the next found, and noise alone.
+* **Not done:** a real flight. The deviation (about ±3 kHz, from a published "6 kHz peak to peak" for the iMet-4 that was not
+  checked against its data sheet here) and the 1200 / 2200 Hz tones (rs1729's decoder) are what the sources give; the time zone of the GPS time of day (GPS or UTC) is not
+  stated by them.
+
 ### Meshtastic (LoRa)
 
 Meshtastic nodes talk LoRa: chirps that sweep the bandwidth, each starting at one of 2^SF offsets, behind a preamble of
@@ -665,7 +726,10 @@ rtlsdr-tool meteor --ifile scene.u8 --mode oqpsk --out ours --cadu ours.cadu    
 meteor_demod -B -s 288000 --bps 8 -m oqpsk -o md.s scene.u8 && rtlsdr-tool meteor --soft md.s --mode oqpsk
 satdump meteor_m2-x_lrpt baseband scene.u8 sd --samplerate 288000 --baseband_format cu8
 
-git clone https://github.com/rs1729/RS && (cd RS/demod/mod && gcc -c demod_mod.c bch_ecc_mod.c && gcc rs41mod.c demod_mod.o bch_ecc_mod.o -lm -o rs41mod)
+git clone https://github.com/rs1729/RS && (cd RS/imet && gcc imet1rs_dft.c -lm -o imet1rs_dft)
+Tools/imet-oracle-compare.py RS/imet/imet1rs_dft rtlsdr-tool /tmp/imet --cnr=25,14,11,10,9,8 --seeds 1,2 --seconds 60   # numpy, scipy
+Tools/imet-oracle-compare.py RS/imet/imet1rs_dft rtlsdr-tool /tmp/imet --cnr 20,12 --baud 1195 --offset -4500   # a baud rate imet1rs_dft cannot follow
+(cd RS/demod/mod && gcc -c demod_mod.c bch_ecc_mod.c && gcc rs41mod.c demod_mod.o bch_ecc_mod.o -lm -o rs41mod)
 Tools/sonde-oracle-compare.py RS/demod/mod/rs41mod rtlsdr-tool RS/rs41/wav/*.wav --invert
 RS/demod/mod/rs41mod -i --ecc2 -r RS/rs41/wav/20140717_402MHz.wav > frames.txt              # dewhitened frames
 Tools/rs41-oracle.py frames.txt sonde --ebn0 9 --offset 3000                              # numpy

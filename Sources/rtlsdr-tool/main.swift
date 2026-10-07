@@ -29,7 +29,7 @@ usage:
   rtlsdr-tool ism --code '[19]{36}b5a8f0470' [--json]
   rtlsdr-tool meteor [--soft FILE | --ifile FILE] [--rate 288000] [--freq 137.9e6] [--mode oqpsk|qpsk] [--symbol-rate 72000|80000] [--out DIR]
                      [--web PORT [--host 127.0.0.1] [--speed 1]] [--cadu FILE] [--write-soft FILE] [--gain 40.2] [--seconds N]
-  rtlsdr-tool sonde [--type rs41|dfm|m10] [--deviation <Hz>] [--discriminator] [--repair] [--wav FILE | --ifile FILE [--rate 240000] [--offset <Hz>] | --freq <Hz>] [--json] [--verbose] [--gain auto|<dB>] [--seconds N]
+  rtlsdr-tool sonde [--type rs41|dfm|m10|imet] [--deviation <Hz>] [--discriminator] [--repair] [--wav FILE | --ifile FILE [--rate 240000] [--offset <Hz>] | --freq <Hz>] [--json] [--verbose] [--gain auto|<dB>] [--seconds N]
   rtlsdr-tool sonde --scan [--type rs41|dfm|m10] [--from 400e6 --to 406e6] [--dwell 3] [--threshold 8] [--json] [--verbose] [--gain 40.2]
   rtlsdr-tool lora --ifile FILE [--cf32] [--rate 1000000] [--offset <Hz>] [--freq <Hz>] [--sf 11] [--bw 250000] [--cr 1]
                    [--sync 0x2B] [--preamble 16] [--ldro on|off] [--symbols]

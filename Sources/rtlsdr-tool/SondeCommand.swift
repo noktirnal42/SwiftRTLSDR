@@ -89,7 +89,7 @@ protocol SondeReceiving: AnyObject {
 
 /// The sonde types the command knows, by `--type`.
 enum SondeType: String, CaseIterable {
-    case rs41, dfm, m10
+    case rs41, dfm, m10, imet
 
     var name: String { rawValue.uppercased() }
     var frequencyRange: ClosedRange<Int> {
@@ -97,6 +97,7 @@ enum SondeType: String, CaseIterable {
         case .rs41: return RS41.frequencyRange
         case .dfm: return DFM.frequencyRange
         case .m10: return M10.frequencyRange
+        case .imet: return IMet.frequencyRange
         }
     }
     var description: String {
@@ -104,6 +105,7 @@ enum SondeType: String, CaseIterable {
         case .rs41: return "RS41, 4800 bit/s GFSK"
         case .dfm: return "DFM-06/09/17, 2500 symbol/s Manchester FSK"
         case .m10: return "M10/M20, 9600 symbol/s Manchester FSK"
+        case .imet: return "iMet-1/iMet-4, 1200 baud AFSK on FM"
         }
     }
     /// How wide a signal this type makes, for the scan loop to know what it may dwell on.
@@ -127,6 +129,9 @@ enum SondeType: String, CaseIterable {
                                        deviationHz: options.deviationHz ?? M10Receiver.defaultDeviationHz,
                                        useTones: !options.discriminator, decoder: shared.m10)
             return M10Adapter(receiver, tunedHz: tunedHz, json: json)
+        case .imet:
+            return IMetAdapter(IMetReceiver(sampleRate: sampleRate, offsetHz: offsetHz, channelCutoffHz: cutoffHz ?? 5_000, decoder: shared.imet),
+                               tunedHz: tunedHz, json: json)
         }
     }
 
@@ -140,6 +145,7 @@ enum SondeType: String, CaseIterable {
             receiver.sync.repairTwoBitErrors = options.repair
             return DFMAdapter(receiver, tunedHz: tunedHz, json: json)
         case .m10: return M10Adapter(M10Receiver(audioRate: audioRate, decoder: shared.m10), tunedHz: tunedHz, json: json)
+        case .imet: return IMetAdapter(IMetReceiver(audioRate: audioRate, decoder: shared.imet), tunedHz: tunedHz, json: json)
         }
     }
 
@@ -175,6 +181,7 @@ final class SondeSharedState: @unchecked Sendable {
     let rs41 = RS41Decoder()
     let dfm = DFMDecoder()
     let m10 = M10Decoder()
+    let imet = IMetDecoder()
 }
 
 private final class RS41Adapter: SondeReceiving {
@@ -238,6 +245,28 @@ private final class M10Adapter: SondeReceiving {
         events.map { event in
             let type = event.frame.kind.map { String(format: "type 0x%02X", $0.rawValue) } ?? "unknown type"
             let note = "\(type), \(event.frame.length + 1) bytes, \(Int(event.symbolRate.rounded())) symbols/s" + (event.inverted ? ", inverted" : "")
+            var frequencyKHz: Int?
+            if let tunedHz { frequencyKHz = Int(((tunedHz + (event.frequencyOffsetHz ?? 0)) / 1000).rounded()) }
+            return SondeOutput(kind: kind, json: event.report?.json(frequencyKHz: frequencyKHz), line: event.report?.line, note: note,
+                               corrected: false, offsetHz: event.frequencyOffsetHz, sampleIndex: event.sampleIndex)
+        }
+    }
+}
+
+private final class IMetAdapter: SondeReceiving {
+    let receiver: IMetReceiver
+    let tunedHz: Double?
+    let json: Bool
+    let kind = "IMET"
+    init(_ receiver: IMetReceiver, tunedHz: Double?, json: Bool) { self.receiver = receiver; self.tunedHz = tunedHz; self.json = json }
+    var rejectedHeaders: Int { receiver.rejectedHeaders }
+    var tuning: (listeningHz: Double, search: (offsetHz: Double, snrDB: Double)?)? { (receiver.listeningOffsetHz, receiver.lastSearch) }
+    func process(iq: [UInt8]) -> [SondeOutput] { convert((try? receiver.process(iq: iq)) ?? []) }
+    func process(audio: [Float]) -> [SondeOutput] { convert((try? receiver.process(audio: audio)) ?? []) }
+
+    private func convert(_ events: [IMetEvent]) -> [SondeOutput] {
+        events.map { event in
+            let note = "\(event.frame.packets.count) packet(s) with a good checksum" + (event.frame.damaged > 0 ? ", \(event.frame.damaged) damaged" : "")
             var frequencyKHz: Int?
             if let tunedHz { frequencyKHz = Int(((tunedHz + (event.frequencyOffsetHz ?? 0)) / 1000).rounded()) }
             return SondeOutput(kind: kind, json: event.report?.json(frequencyKHz: frequencyKHz), line: event.report?.line, note: note,
