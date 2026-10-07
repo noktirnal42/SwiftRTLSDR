@@ -85,9 +85,11 @@ for everything that streams: the debug build cannot keep up with a five-channel 
 | ACARS, 5 US channels at 2.4 MS/s | No dropped blocks over 90 s in a release build. **No message was received** (no antenna for 131 MHz) |
 | VDL Mode 2, 4 US channels at 1.05 MS/s | No dropped blocks over 60 s; no frame received |
 | ADS-B | No aircraft in 60 s (no 1090 MHz antenna) |
+| POCSAG, `pager --freq 152.84e6`, 40 s | No page and no false page (no transmission was expected on that frequency; the decoder stayed quiet on a noise-only channel) |
+| AIS, `ais`, 60 s on both channels | No ship heard (no VHF marine antenna, probably far from water); 97 header correlations on noise without a frame, and nothing decoded |
 | `sonde --scan` 400-406 MHz | Two steady carriers (403.199 and 405.400 MHz) found, tried with RS41, DFM and M10 and rejected; neither is a sonde. **No sonde was in range**, so no decoder has still received a real signal, and the DFM and M10 deviations (±2.4, ±4.32 kHz) remain unconfirmed |
 
-Not run: serial provisioning, calibration (no reference), UAT, ISM, Meshtastic, Meteor, hydrogen line.
+Not run: serial provisioning, calibration (no reference), UAT, ISM, Meshtastic, Meteor, hydrogen line, and (the dongle was taken by another program) VDL Mode 2 with its new ATN decoding.
 
 ## Not tested
 
