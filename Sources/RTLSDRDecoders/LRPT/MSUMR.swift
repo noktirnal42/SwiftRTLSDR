@@ -225,10 +225,22 @@ public final class MSUMRChannel {
         let blockDelta = (block - blockSequence + Self.blocksPerLine) % Self.blocksPerLine
         let linesLost = self.packetSequence < 0 ? 0 : packetDelta / Self.packetsPerPeriod
         let stripsLost = blockDelta / MSUMRCompression.blocksPerPacket + linesLost * Self.packetsPerLine
-        for _ in 0..<stripsLost { cache(nil) }
+        skipLost(stripsLost)
         self.packetSequence = packetSequence
         blockSequence = block
         cache(strip)
+    }
+
+    /// Moves past `count` lost strips. They stay black without being written: the pixels there are already zero (the
+    /// array grows with zeros, and each strip position is written at most once). Only the position moves, so a gap no
+    /// longer costs a pixel write per lost pixel (SH-2: about 4 s of debug-build time per 5 000 lost strips).
+    private func skipLost(_ count: Int) {
+        guard count > 0 else { return }
+        let total = blockSequence + count * MSUMRCompression.blocksPerPacket
+        let lines = total / Self.blocksPerLine
+        blockSequence = total % Self.blocksPerLine
+        packetSequence += lines * (Self.packetsPerPeriod - Self.packetsPerLine)
+        offset += lines * Self.stripPixels
     }
 
     private func cache(_ strip: [[UInt8]]?) {

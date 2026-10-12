@@ -210,6 +210,25 @@ struct LRPTDemodulatorTests {
         return (modulator.iq(LRPTTestSignal.channelBits(cadus, mode: offset ? .oqpskNRZM : .qpsk)), cadus)
     }
 
+    /// How fast the whole chain (demodulator, deframer, decoder) runs on this build, against the real-time rate of the
+    /// signal. Prints the figure; asserts nothing, because it depends on the build (debug is slower than release).
+    @Test func theWholeChainTimedAgainstTheSignalsRealTime() {
+        let (iq, _) = signal(offset: false, carrierHz: 0)
+        let seconds = Double(iq.count / 2) / 288_000
+        let start = Date()
+        let demodulator = LRPTDemodulator(sampleRate: 288_000, offset: false)
+        let decoder = LRPTFrameDecoder(mode: .qpsk)
+        var index = 0
+        while index < iq.count {
+            let end = min(iq.count, index + 65_536)
+            _ = decoder.process(demodulator.process(Array(iq[index..<end])))
+            index = end
+        }
+        _ = decoder.flush()
+        let elapsed = Date().timeIntervalSince(start)
+        print(String(format: "LRPT_REALTIME signal %.2f s, chain %.2f s, real-time factor %.2f", seconds, elapsed, seconds / elapsed))
+    }
+
     @Test(arguments: [(true, -1500.0), (true, 0.0), (false, 2200.0)])
     func framesAreDemodulatedAndDecoded(offset: Bool, carrierHz: Double) {
         let (iq, cadus) = signal(offset: offset, carrierHz: carrierHz)
