@@ -205,6 +205,8 @@ public final class RTLTCPServer: @unchecked Sendable {
                 return .unsupported
             }
             return .applied
+        } catch let refusal as RemoteRefusal {
+            return .refused(refusal.reason)
         } catch {
             return .failed(error.localizedDescription)
         }
