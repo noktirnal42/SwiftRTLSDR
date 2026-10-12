@@ -64,17 +64,30 @@ public final class BandScanner {
     }
 
     /// Tunes through every hop once and returns the stitched spectrum.
-    public func sweep() throws -> Spectrum {
+    ///
+    /// `progress` is called once per hop, after that hop is measured (or found unlocked), in tuning order. `isCancelled`
+    /// is asked before each hop is tuned, so a cancel takes effect within one hop. A cancelled sweep throws
+    /// `ScanError.cancelled` and returns no spectrum: a partial one would look like a whole band.
+    public func sweep(
+        progress: (SweepProgress) -> Void = { _ in },
+        isCancelled: () -> Bool = { false }
+    ) throws -> Spectrum {
         var stitcher = SpectrumStitcher(plan: plan)
         let settleBytes = Int(configuration.settleSeconds * receiver.sampleRate) * 2
         let wanted = configuration.framesPerHop * configuration.fftSize * 2
         unlockedHops = []
         for (index, center) in plan.centers.enumerated() {
+            if isCancelled() { throw ScanError.cancelled }
             try receiver.tune(to: center)
-            guard receiver.pllLocked else { unlockedHops.append(center); continue }
-            let bytes = try receiver.capture(byteCount: settleBytes + wanted)
-            guard let power = estimator.averagePower(Array(bytes.dropFirst(settleBytes))) else { throw ScanError.shortCapture }
-            stitcher.add(hop: index, power: power)
+            let locked = receiver.pllLocked
+            if locked {
+                let bytes = try receiver.capture(byteCount: settleBytes + wanted)
+                guard let power = estimator.averagePower(Array(bytes.dropFirst(settleBytes))) else { throw ScanError.shortCapture }
+                stitcher.add(hop: index, power: power)
+            } else {
+                unlockedHops.append(center)
+            }
+            progress(SweepProgress(hop: index + 1, hopCount: plan.centers.count, centerHz: center, pllLocked: locked))
         }
         return stitcher.spectrum()
     }
@@ -84,9 +97,29 @@ public final class BandScanner {
     }
 }
 
+/// Where a sweep is, reported after each hop (see `BandScanner.sweep(progress:isCancelled:)`).
+public struct SweepProgress: Sendable, Equatable {
+    /// The 1-based number of the hop just measured.
+    public var hop: Int
+    public var hopCount: Int
+    /// The hop's centre frequency.
+    public var centerHz: Int
+    /// Whether the oscillator locked on this hop. An unlocked hop contributes no power of its own.
+    public var pllLocked: Bool
+
+    public init(hop: Int, hopCount: Int, centerHz: Int, pllLocked: Bool) {
+        self.hop = hop
+        self.hopCount = hopCount
+        self.centerHz = centerHz
+        self.pllLocked = pllLocked
+    }
+}
+
 public enum ScanError: Error, Equatable, LocalizedError {
     case invalidConfiguration
     case shortCapture
+    /// The caller asked a sweep to stop; no spectrum was produced.
+    case cancelled
 
     public var errorDescription: String? {
         switch self {
@@ -94,6 +127,8 @@ public enum ScanError: Error, Equatable, LocalizedError {
             return "The scan settings do not fit together (set a sample rate first; the FFT size must be a power of two; each hop needs usable bins beside its DC gap)."
         case .shortCapture:
             return "The receiver returned fewer samples than one transform needs."
+        case .cancelled:
+            return "The sweep was stopped before it finished."
         }
     }
 }
