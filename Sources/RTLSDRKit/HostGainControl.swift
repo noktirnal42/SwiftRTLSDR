@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import Foundation
 
+/// Something whose tuner gain can be set: `RTLSDRDevice` is one, and a test can stand in for it.
+public protocol TunerGainSetting: AnyObject {
+    /// Manual gain, in tenths of a dB; the nearest setting the tuner can make is used.
+    func setTunerGain(tenthsDB: Int) throws
+}
+
+extension RTLSDRDevice: TunerGainSetting {}
+
 /// Runs a `GainLoop` against a streaming device: an overload guard or a host-side AGC.
 ///
 ///     let control = try HostGainControl(device: device, configuration: .overloadGuard(ceilingTenthsDB: 372))
@@ -22,7 +30,7 @@ public final class HostGainControl: @unchecked Sendable {
         public var statistics: SampleStatistics
     }
 
-    private let device: RTLSDRDevice
+    private let device: TunerGainSetting
     private let queue = DispatchQueue(label: "RTLSDRKit.HostGainControl")
     private let onQueue = DispatchSpecificKey<Bool>()
     private let onChange: (@Sendable (Change) -> Void)?
@@ -40,7 +48,7 @@ public final class HostGainControl: @unchecked Sendable {
     ///   - onChange: called on the control's queue after each gain change.
     ///   - onError: called on the control's queue if a gain change fails; the control then stops.
     public init(
-        device: RTLSDRDevice,
+        device: some TunerGainSetting,
         configuration: GainLoop.Configuration,
         onChange: (@Sendable (Change) -> Void)? = nil,
         onError: (@Sendable (Error) -> Void)? = nil
