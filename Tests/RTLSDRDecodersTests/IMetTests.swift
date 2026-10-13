@@ -221,7 +221,7 @@ struct IMetReceiverTests {
             events += try receiver.process(iq: Array(iq[index..<end]))
             index = end
         }
-        return events
+        return events + (try receiver.flush())
     }
 
     private func audio(_ values: [Double], receiver: IMetReceiver) throws -> [IMetEvent] {
@@ -265,6 +265,21 @@ struct IMetReceiverTests {
             let events = try audio(modulator.audio(frames(3)), receiver: IMetReceiver(audioRate: 48_000))
             #expect(events.compactMap { $0.report?.frame } == [1234, 1235, 1236], "factor \(factor)")
         }
+    }
+
+    /// SH-4: any cutting of the stream, odd piece sizes included, gives the same events as one piece.
+    @Test func anyChunkingGivesExactlyWhatOneBigFeedGives() throws {
+        var modulator = IMetModulator(sampleRate: 240_000)
+        let iq = modulator.iq(frames(6))
+        func chunked(_ plan: [Int]) throws -> [String] {
+            let receiver = IMetReceiver(sampleRate: 240_000, offsetHz: 3_000, channelCutoffHz: 5_000)
+            return try ChunkPlans.events(total: iq.count, plan: plan, feed: { range in
+                try receiver.process(iq: Array(iq[range])).map { String(describing: $0) }
+            }, finish: { try receiver.flush().map { String(describing: $0) } })
+        }
+        let whole = try chunked([iq.count])
+        #expect(!whole.isEmpty)
+        for plan in ChunkPlans.anyPlans(seeds: [1, 2], count: 30, maximum: 60_000) { #expect(try chunked(plan) == whole) }
     }
 
     @Test func reportsComeFromIQAtAnOffsetCarrier() throws {

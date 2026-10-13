@@ -308,6 +308,16 @@ struct VDL2ReceptionTests {
         let byChannel = Dictionary(grouping: receptions, by: \.channel).mapValues { $0.compactMap { $0.frame.acars?.registration } }
         #expect(byChannel[0] == ["N123AB"] && byChannel[1] == ["G-ABCD"])
         #expect(receiver.badFrames == 0)
+        // SH-4: any cutting of the stream gives the same receptions as one piece.
+        func run(_ plan: [Int]) -> [String] {
+            let receiver = VDL2Receiver(sampleRate: rate, centerHz: center, channels: channels)
+            return ChunkPlans.events(total: iq.count, plan: plan, feed: { range in
+                receiver.process(iq: Array(iq[range])).map { String(describing: $0) }
+            }, finish: { [] })
+        }
+        let whole = run([iq.count])
+        #expect(whole.count == receptions.count)
+        for plan in ChunkPlans.anyPlans(seeds: [1, 2], count: 40, maximum: 200_000) { #expect(run(plan) == whole) }
     }
 
     @Test func noiseAloneGivesNothing() {

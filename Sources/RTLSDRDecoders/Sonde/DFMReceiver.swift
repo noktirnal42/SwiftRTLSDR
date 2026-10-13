@@ -194,7 +194,24 @@ public final class DFMReceiver {
     public var lastSearch: (offsetHz: Double, snrDB: Double)? { front?.lastSearch }
     public var rejectedHeaders: Int { sync.rejected }
 
+        /// I/Q is consumed in fixed blocks of 16384 samples, whatever the caller's pieces (see `FixedBlocks`): a receiver's
+    /// tracking state moves between blocks, so the same stream must always be cut the same way. Pieces are held until a
+    /// block is full; `flush()` takes what is left at the end of the stream.
+    private var pendingIQ = FixedBlocks(bytes: 2 * 96_000)
+
     public func process(iq block: [UInt8]) -> [DFMEvent] {
+        var events: [DFMEvent] = []
+        for full in pendingIQ.append(block) { events += decodeIQBlock(full) }
+        return events
+    }
+
+    /// The events held back for an incomplete I/Q block (call once the stream has ended).
+    public func flush() -> [DFMEvent] {
+        guard let rest = pendingIQ.remainder() else { return [] }
+        return decodeIQBlock(rest)
+    }
+
+private func decodeIQBlock(_ block: [UInt8]) -> [DFMEvent] {
         guard let front else { preconditionFailure("this receiver was made for audio") }
         let (frequency, statistic) = front.processBlock(iq: block)
         return handle(tones ? sync.process(statistic, frequency: frequency) : sync.process(frequency))

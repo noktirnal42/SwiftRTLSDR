@@ -190,7 +190,24 @@ public final class RS41Receiver {
     /// Headers found whose frames had nothing intact.
     public var rejectedHeaders: Int { sync.rejected }
 
+        /// I/Q is consumed in fixed blocks of 16384 samples, whatever the caller's pieces (see `FixedBlocks`): a receiver's
+    /// tracking state moves between blocks, so the same stream must always be cut the same way. Pieces are held until a
+    /// block is full; `flush()` takes what is left at the end of the stream.
+    private var pendingIQ = FixedBlocks(bytes: 32768)
+
     public func process(iq block: [UInt8]) -> [RS41Event] {
+        var events: [RS41Event] = []
+        for full in pendingIQ.append(block) { events += decodeIQBlock(full) }
+        return events
+    }
+
+    /// The events held back for an incomplete I/Q block (call once the stream has ended).
+    public func flush() -> [RS41Event] {
+        guard let rest = pendingIQ.remainder() else { return [] }
+        return decodeIQBlock(rest)
+    }
+
+private func decodeIQBlock(_ block: [UInt8]) -> [RS41Event] {
         guard let front else { preconditionFailure("this receiver was made for audio") }
         return handle(sync.process(front.process(iq: block)))
     }

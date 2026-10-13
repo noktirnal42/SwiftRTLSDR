@@ -245,6 +245,27 @@ struct RS41ReceiverTests {
         }
     }
 
+    /// SH-4: any cutting of the stream, odd piece sizes included, gives the same events as one piece. Compared in a
+    /// canonical form: a dictionary's printed order is not part of its value.
+    @Test func anyChunkingGivesExactlyWhatOneBigFeedGives() {
+        var modulator = RS41Modulator()
+        let iq = modulator.iq(frames(5))
+        func canonical(_ event: RS41Event) -> String {
+            let blocks = event.frame.blocks.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value.offset),\($0.value.length),\($0.value.valid)" }
+            return "\(event.frame.bytes) corrected=\(String(describing: event.frame.corrected)) blocks=\(blocks) "
+                + "report=\(String(describing: event.report)) at=\(event.sampleIndex) corr=\(event.correlation) off=\(String(describing: event.frequencyOffsetHz))"
+        }
+        func chunked(_ plan: [Int]) -> [String] {
+            let receiver = RS41Receiver(sampleRate: 240_000)
+            return ChunkPlans.events(total: iq.count, plan: plan, feed: { range in
+                receiver.process(iq: Array(iq[range])).map(canonical)
+            }, finish: { receiver.flush().map(canonical) })
+        }
+        let whole = chunked([iq.count])
+        #expect(!whole.isEmpty)
+        for plan in ChunkPlans.anyPlans(seeds: [1, 2], count: 30, maximum: 60_000) { #expect(chunked(plan) == whole) }
+    }
+
     /// The sonde 4 kHz from where the receiver starts listening: the carrier search finds it within the first second.
     @Test func framesAreReceivedFromIQ() {
         var modulator = RS41Modulator()
@@ -257,6 +278,7 @@ struct RS41ReceiverTests {
             events += receiver.process(iq: Array(iq[index..<end]))
             index = end
         }
+        events += receiver.flush()
         let numbers = events.compactMap { $0.report?.frame }
         #expect(numbers.suffix(4) == [5001, 5002, 5003, 5004], "\(numbers)")
         #expect(events.filter { $0.report != nil }.allSatisfy { $0.frame.corrected == 0 })
