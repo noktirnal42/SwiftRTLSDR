@@ -58,7 +58,8 @@ public struct SampleStatistics: Sendable, Equatable {
         sumOfSquares += other.sumOfSquares
     }
 
-    /// The share of I and Q values that were on a rail (0...1).
+    /// The share of I and Q values that were on a rail (0...1): `railCount / (2 * sampleCount)`, because each pair
+    /// has two values. 0 for an empty block.
     public var railFraction: Double {
         sampleCount == 0 ? 0 : Double(railCount) / Double(2 * sampleCount)
     }

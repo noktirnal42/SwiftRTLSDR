@@ -91,6 +91,35 @@ struct UATDemodulatorTests {
         #expect(found.map(\.payload) == frames.map(\.payload))
     }
 
+    /// SH-4: any cutting of the stream, odd piece sizes included, gives exactly the frames one big feed gives (payload,
+    /// kind, sample index, repairs).
+    @Test func anyChunkingGivesExactlyWhatOneBigFeedGives() throws {
+        let frames = Array(try sampleFrames().prefix(12))
+        var placed: [(UATFrame, Int)] = []
+        var position = 500
+        for frame in frames { placed.append((frame, position)); position += (frame.kind == .uplink ? 9_000 : 1_000) + 311 }
+        let iq = UATModulator().iq(placed, samples: position + 10_000)
+        func run(_ plan: [Int]) -> [UATFrame] {
+            let demodulator = UATDemodulator()
+            var found: [UATFrame] = []
+            var offset = 0
+            for length in plan where offset < iq.count {
+                let end = min(iq.count, offset + length)
+                found += demodulator.process(Array(iq[offset..<end]))
+                offset = end
+            }
+            if offset < iq.count { found += demodulator.process(Array(iq[offset...])) }
+            return found + demodulator.process([UInt8](repeating: 128, count: 2 * 10_000))   // the look-ahead
+        }
+        let whole = run([iq.count])
+        #expect(whole.map(\.payload) == frames.map(\.payload))
+        for seed: UInt64 in [3, 4, 5] {
+            var generator = Seeded(state: seed)
+            let plan = (0..<400).map { _ in Int.random(in: 1...6_000, using: &generator) }
+            #expect(run(plan) == whole, "chunking seed \(seed)")
+        }
+    }
+
     @Test(arguments: [0.0, 0.25, 0.5, 0.75])
     func anyTimingWithinTheBitIsFine(timing: Double) throws {
         let frames = Array(try sampleFrames().prefix(6))

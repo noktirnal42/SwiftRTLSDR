@@ -286,7 +286,7 @@ struct M10ReceiverTests {
             events += receiver.process(iq: Array(iq[index..<end]))
             index = end
         }
-        return events
+        return events + receiver.flush()
     }
 
     /// FM audio from another receiver, of either polarity (the differential coding does not care).
@@ -298,6 +298,21 @@ struct M10ReceiverTests {
             let events = M10Receiver(audioRate: 96_000).process(audio: audio)
             #expect(events.compactMap { $0.report?.counter } == [40, 41, 42, 43], "inverted \(inverted)")
         }
+    }
+
+    /// SH-4: any cutting of the stream, odd piece sizes included, gives the same events as one piece.
+    @Test func anyChunkingGivesExactlyWhatOneBigFeedGives() {
+        var modulator = M10Modulator(sampleRate: 192_000, carrierHz: 5_000)
+        let iq = modulator.iq(frames(5))
+        func chunked(_ plan: [Int]) -> [String] {
+            let receiver = M10Receiver(sampleRate: 192_000)
+            return ChunkPlans.events(total: iq.count, plan: plan, feed: { range in
+                receiver.process(iq: Array(iq[range])).map { String(describing: $0) }
+            }, finish: { receiver.flush().map { String(describing: $0) } })
+        }
+        let whole = chunked([iq.count])
+        #expect(!whole.isEmpty)
+        for plan in ChunkPlans.anyPlans(seeds: [1, 2], count: 30, maximum: 60_000) { #expect(chunked(plan) == whole) }
     }
 
     @Test func reportsComeFromIQAtAnOffsetCarrier() {

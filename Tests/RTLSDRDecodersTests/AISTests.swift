@@ -250,10 +250,25 @@ struct AISReceiverTests {
             events += try receiver.process(iq: Array(iq[index..<end]))
             index = end
         }
-        return events
+        return events + (try receiver.flush())
     }
 
     private var both: [(offsetHz: Double, name: String?)] { [(AIS.channelA - 162e6, "A"), (AIS.channelB - 162e6, "B")] }
+
+    /// SH-4: any cutting of the stream, odd piece sizes included, gives the same events as one piece.
+    @Test func anyChunkingGivesExactlyWhatOneBigFeedGives() throws {
+        let sent = messages()
+        let signal = capture([(sent[0], AIS.channelA - 162e6), (sent[1], AIS.channelB - 162e6), (sent[2], AIS.channelA - 162e6)])
+        func chunked(_ plan: [Int]) throws -> [String] {
+            let receiver = AISReceiver(sampleRate: 240_000, channels: both)
+            return try ChunkPlans.events(total: signal.count, plan: plan, feed: { range in
+                try receiver.process(iq: Array(signal[range])).map { String(describing: $0) }
+            }, finish: { try receiver.flush().map { String(describing: $0) } })
+        }
+        let whole = try chunked([signal.count])
+        #expect(whole.count == 3)
+        for plan in ChunkPlans.anyPlans(seeds: [1, 2], count: 30, maximum: 100_000) { #expect(try chunked(plan) == whole) }
+    }
 
     @Test func burstsOnBothChannelsComeOutOnTheirOwn() throws {
         let sent = messages()

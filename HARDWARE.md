@@ -91,6 +91,41 @@ for everything that streams: the debug build cannot keep up with a five-channel 
 
 Not run: serial provisioning, calibration (no reference), UAT, ISM, Meshtastic, Meteor, hydrogen line, and (the dongle was taken by another program) VDL Mode 2 with its new ATN decoding.
 
+## Run on the dongle 2026-10-12 (driver agent, release build)
+
+Same dongle (RTL2838UHIDIR, R820T, serial `00000001`), NooElec telescopic mast indoors, length not recorded. Release build
+of `rtlsdr-tool` from haiku/driver-next (commit 08b7190). Nothing was written to the EEPROM. Each run was under
+`dongle.sh` and the SignalHive app was not running. What was received is stated as received.
+
+| Check | Result |
+|---|---|
+| `calibrate --show`, `eeprom --out` (read only) | No calibration stored (offsets 0x80-0xff all 0xff). The 256-byte EEPROM read succeeded and was saved. Not yet byte-compared with `rtl_eeprom -r` in this run |
+| `retunebench` (200 retunes per pattern) | Small steps 27.2 ms without shortcuts, **11.8 ms with `RetuneShortcuts.all`**; band hops (100 to 433 MHz) 31.5 / **16.1 ms**; never unlocked |
+| `lockscan --fast` | Locked at all 349 points, none failed; 8 points refused by the range check (20 and 1770-1800 MHz); mean retune 11.6 ms, slowest 30.3 ms |
+| `scan --from 88e6 --to 108e6` (SH-5, SH-6) | 24 hops of 2.4 MS/s (2344 Hz bins). Sweep 0.96 s, so **about 40 ms per hop** (16 transforms per hop, 2 ms settle, retune). Three carriers: 95.9992 MHz (21.0 dB SNR), 105.5992 MHz (20.7 dB), 92.4930 MHz (13.9 dB). The carrier frequencies are only good to about one bin (2.3 kHz) |
+| `calibrate --fm 96.0e6 --seconds 12` (SH-9, FM stereo pilot) | Three 4.1 s segments; pilot at **19000.125, 19000.114, 19000.113 Hz**, i.e. **-6.59, -5.99, -5.96 ppm**, line 22-24 dB. Mean -5.96 ppm, standard error 0.35 ppm. **Not a verified figure** (see below) |
+| `calibrate --fm 105.6e6 --seconds 12` | No usable pilot: the strongest line is at 19011.17 Hz (-588 ppm), 10.7 dB, so it was not accepted as a pilot. One segment reported nothing |
+| `monitor --freq 96.0e6 --guard --gain 49.6`, 40 s | Level -28.4 dBFS, rail fraction 0.000 at maximum gain: the guard never acted. **The overload backoff was not exercised** (no signal strong enough); the antenna here cannot make one |
+| `serve` (rtl_tcp) over loopback | Header `RTL0`, tuner type 5, 29 gains. A client set 105.6 MHz and 2.048 MS/s and received **4.08 MB/s** for 3 s (nominal 4.10). Commands were accepted. SDR#, GQRX and SDR++ were not tried |
+| `ism --freq 433.92e6`, 90 s (default 250 kS/s) | No sensor packet heard |
+| `adsb`, 60 s | No Mode S frame heard (no 1090 MHz antenna of the right length) |
+| `acars --region us`, 60 s | No message heard |
+| `ais`, 60 s on 161.975 and 162.025 MHz | No frame. 112 header correlations without a frame (noise) |
+| `pager --freq 152.84e6`, 60 s | No page; 2 codewords corrected, 14 beyond repair (noise) |
+| `vdl2 --region eu`, 60 s | No frame heard |
+
+**Crystal error: not settled.** The pilot says the dongle is about 6 ppm slow (apparent frequencies higher than nominal).
+The carrier scan puts both stations about 0.8 kHz *low*, which would mean about 8 ppm fast. Both cannot hold if the
+stations sit on their channel frequencies. The scan's resolution (2.3 kHz bins) is too coarse to test a 0.6 kHz effect,
+so the disagreement is open. The pilot's own accuracy is the broadcaster's: the rules allow it to be 2 Hz out, which is
+105 ppm; a second station that agrees is the only check, and the second station gave no usable pilot here. **Do not
+store or apply this correction until two stations agree.**
+
+**Not run on this dongle today:** the scanner's settle time (SH-5: no measurement tool exists; the 2 ms the scanner discards
+is still a guess), the `readIdentity()` call itself (its EEPROM read is the same one `calibrate --show` makes, so only
+that read is on the dongle), serial provisioning, `calibrate --write`, ACARS/VDL2/AIS/POCSAG/ADS-B/ISM **reception**
+(none was heard in 60-90 s, so none of them is verified on air), UAT, Meshtastic, Meteor, the hydrogen line, sondes.
+
 ## Not tested
 
 * Any other dongle: RTL-SDR Blog V3 (bias tee is driven on GPIO 0 but was only exercised against the fake dongle),

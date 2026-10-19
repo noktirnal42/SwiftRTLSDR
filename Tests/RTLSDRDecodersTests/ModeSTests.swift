@@ -239,6 +239,33 @@ struct ModeSDemodulatorTests {
         #expect(frames.map(\.sampleIndex) == starts)
     }
 
+    /// SH-4: any way of cutting the stream (odd piece sizes included, so pieces split I/Q pairs) gives exactly the frames
+    /// one big feed gives, down to the sample index and the level.
+    @Test func anyChunkingGivesExactlyWhatOneBigFeedGives() {
+        let starts = [100, 2_000, 4_100, 6_000, 8_050]
+        let iq = ModeSModulator().iq(Array(zip(squitters, starts)).map { ($0.0, $0.1) }, samples: 10_000)
+        func run(_ plan: [Int]) -> [ModeSFrame] {
+            let demodulator = ModeSDemodulator()
+            var frames: [ModeSFrame] = []
+            var position = 0
+            for length in plan where position < iq.count {
+                let end = min(iq.count, position + length)
+                frames += demodulator.process(Array(iq[position..<end]))
+                position = end
+            }
+            if position < iq.count { frames += demodulator.process(Array(iq[position...])) }
+            return frames + demodulator.flush()
+        }
+        let whole = run([iq.count])
+        #expect(whole.map(\.sampleIndex) == starts)
+        for seed: UInt64 in [1, 2, 3, 4, 5] {
+            var generator = Seeded(state: seed)
+            let plan = (0..<400).map { _ in Int.random(in: 1...1_400, using: &generator) }
+            #expect(run(plan) == whole, "chunking seed \(seed)")
+        }
+        #expect(run([1]) == whole, "one byte at a time")
+    }
+
     @Test func addressParityRepliesNeedAConfirmedAddress() throws {
         let rows = try resourceLines("modes-surveillance-vectors")
         let altitudeReply = bytes(hex: rows[0][1])                     // DF4 from 4840D6

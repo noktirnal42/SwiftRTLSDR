@@ -202,15 +202,25 @@ final class RTL2832U: @unchecked Sendable, I2CBus {
         return (UInt8((word >> 16) & 0x3f), UInt8((word >> 8) & 0xff), UInt8(word & 0xff))
     }
 
-    /// The crystal frequency after a correction in ppm, truncated to whole hertz like the reference driver does.
-    static func correctedCrystal(_ crystalHz: Double, ppm: Int) -> Double {
-        Double(UInt32(crystalHz * (1.0 + Double(ppm) / 1e6)))
+    /// The crystal frequency after a correction in parts per billion, truncated to whole hertz like the reference
+    /// driver does. A whole ppm gives the same value as its parts-per-billion form (the division is correctly rounded).
+    static func correctedCrystal(_ crystalHz: Double, partsPerBillion: Int) -> Double {
+        Double(UInt32(crystalHz * (1.0 + Double(partsPerBillion) / 1e9)))
     }
 
-    /// Crystal error correction in parts per million, as the two register bytes the demodulator wants.
-    static func frequencyCorrectionWord(ppm: Int) -> (low: UInt8, high: UInt8) {
-        let offset = Int16(truncatingIfNeeded: Int((Double(ppm) * -1 * 16_777_216.0 / 1_000_000).rounded(.towardZero)))
+    static func correctedCrystal(_ crystalHz: Double, ppm: Int) -> Double {
+        correctedCrystal(crystalHz, partsPerBillion: ppm * 1000)
+    }
+
+    /// Crystal error correction, as the two register bytes the demodulator wants. The register counts 16.8 per ppm
+    /// (about 60 ppb a step), truncated toward zero, so a fraction of a ppm is kept rather than rounded away.
+    static func frequencyCorrectionWord(partsPerBillion: Int) -> (low: UInt8, high: UInt8) {
+        let offset = Int16(truncatingIfNeeded: Int((Double(partsPerBillion) * -1 * 16_777_216.0 / 1_000_000_000).rounded(.towardZero)))
         return (UInt8(offset & 0xff), UInt8((offset >> 8) & 0x3f))
+    }
+
+    static func frequencyCorrectionWord(ppm: Int) -> (low: UInt8, high: UInt8) {
+        frequencyCorrectionWord(partsPerBillion: ppm * 1000)
     }
 
     /// The FIR as the 20 bytes the demodulator expects: eight signed bytes, then eight 12-bit values packed in pairs.
@@ -247,22 +257,26 @@ final class RTL2832U: @unchecked Sendable, I2CBus {
         try writeDemod(page: 1, 0x1b, UInt16(word.low))
     }
 
-    func setFrequencyCorrection(ppm: Int) throws {
-        correctedCrystalHz = Self.correctedCrystal(crystalHz, ppm: ppm)
-        let word = Self.frequencyCorrectionWord(ppm: ppm)
+    func setFrequencyCorrection(partsPerBillion: Int) throws {
+        correctedCrystalHz = Self.correctedCrystal(crystalHz, partsPerBillion: partsPerBillion)
+        let word = Self.frequencyCorrectionWord(partsPerBillion: partsPerBillion)
         try writeDemod(page: 1, 0x3f, UInt16(word.low))
         try writeDemod(page: 1, 0x3e, UInt16(word.high))
     }
 
+    func setFrequencyCorrection(ppm: Int) throws {
+        try setFrequencyCorrection(partsPerBillion: ppm * 1000)
+    }
+
     /// Programs the resampler; returns the sample rate that will really be produced.
     @discardableResult
-    func setSampleRate(_ rate: Int, correctionPPM: Int) throws -> Double {
+    func setSampleRate(_ rate: Int, correctionPartsPerBillion: Int) throws -> Double {
         guard let settings = Self.resamplerSettings(sampleRate: rate, crystalHz: crystalHz) else {
             throw RTLSDRError.invalidSampleRate(rate)
         }
         try writeDemod(page: 1, 0x9f, UInt16(settings.ratio >> 16), length: 2)
         try writeDemod(page: 1, 0xa1, UInt16(settings.ratio & 0xffff), length: 2)
-        try setFrequencyCorrection(ppm: correctionPPM)
+        try setFrequencyCorrection(partsPerBillion: correctionPartsPerBillion)
         try softReset()                                         // so the new ratio takes effect
         return settings.actualRate
     }

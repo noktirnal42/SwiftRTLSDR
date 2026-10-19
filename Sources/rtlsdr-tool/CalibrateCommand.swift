@@ -63,6 +63,11 @@ func calibrate(_ arguments: Arguments) {
             return
         }
 
+        if arguments.option("fm") != nil {
+            try calibrateFromPilot(arguments, station: arguments.double("fm", default: 0))
+            return
+        }
+
         // Measure.
         let carrier: Double
         if let channel = arguments.option("atsc") {
@@ -131,3 +136,46 @@ func calibrate(_ arguments: Arguments) {
         try store(record, arguments, device: device)
     } catch { fail(error.localizedDescription) }
 }
+
+/// `calibrate --fm <station Hz>`: the crystal error from the 19 kHz stereo pilot of an FM station. Measure only: nothing
+/// is stored, whatever the other flags say. The pilot is only as exact as the broadcaster's exciter (the rules allow 2 Hz,
+/// about 105 ppm); compare two stations before trusting the figure.
+private func calibrateFromPilot(_ arguments: Arguments, station: Double) throws {
+    guard station > 1e6 else { fail("--fm needs the station's frequency in hertz, for example 95.9e6") }
+    let rate = arguments.double("rate", default: 2_048_000)
+    let seconds = arguments.double("seconds", default: 10)
+    guard let calibrator = FMPilotCalibrator(sampleRate: rate) else { fail("cannot measure a pilot at \(Int(rate)) S/s") }
+    let segmentSamples = calibrator.decimation * calibrator.fftSize
+    // One read per segment; each read restarts the stream, so the discriminator's memory is dropped between reads.
+    let reads = max(1, Int((seconds * rate / Double(segmentSamples)).rounded(.up)))
+    print("station \(megahertz(station)), tuned \(megahertz(station - rate / 4)) at \(Int(rate)) S/s; "
+          + "\(reads) segment(s) of about \(String(format: "%.1f", Double(segmentSamples) / rate)) s")
+    let device = try arguments.openDevice()
+    defer { device.close() }
+    _ = try device.setSampleRate(Int(rate))
+    try device.setFrequencyCorrection(ppm: 0)                       // measure the crystal as it is
+    try device.setCenterFrequency(Int((station - rate / 4).rounded()))
+    try arguments.applyGain(to: device, default: "auto")
+    _ = try device.readSamples(byteCount: Int(rate / 4) * 2)         // let the oscillator settle
+    for read in 1...reads {
+        // One more sample than a segment needs: the discriminator takes each step from the one before.
+        calibrator.process(iq: try device.readSamples(byteCount: 2 * (segmentSamples + 1)))
+        calibrator.discardPartialSegment()
+        if let m = calibrator.measurement() {
+            print(String(format: "  segment %d: pilot %.4f Hz, %+.3f ppm, line %.1f dB", read, m.pilotHz, m.ppm, m.snrDB))
+        }
+    }
+    guard let m = calibrator.measurement() else {
+        fail("no 19 kHz pilot stands out: a mono station, the wrong frequency, or the signal too weak")
+    }
+    print(String(format: "pilot %.4f Hz: crystal error %+.3f ppm", m.pilotHz, m.ppm))
+    if let error = m.standardErrorPPM, let uncertainty = m.uncertaintyPPM {
+        print(String(format: "  standard error %.3f ppm over %d segment(s); uncertainty %.3f ppm with the reference as given "
+                     + "(the rules allow the pilot to be 2 Hz out: about %.0f ppm)",
+                     error, m.segments, uncertainty, FMPilotCalibrator.regulatoryPilotTolerancePPM))
+    } else {
+        print("  one segment: no standard error (use --seconds 10 or more for two)")
+    }
+    print("measured only; nothing was stored")
+}
+

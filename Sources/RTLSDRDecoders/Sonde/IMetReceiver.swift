@@ -209,7 +209,26 @@ public final class IMetReceiver {
     public var lastSearch: (offsetHz: Double, snrDB: Double)? { front?.lastSearch }
     public var rejectedHeaders: Int { sync.rejected }
 
+        /// I/Q is consumed in fixed blocks of 16384 samples, whatever the caller's pieces (see `FixedBlocks`): a receiver's
+    /// tracking state moves between blocks, so the same stream must always be cut the same way. Pieces are held until a
+    /// block is full; `flush()` takes what is left at the end of the stream.
+    private var pendingIQ = FixedBlocks(bytes: 32768)
+
     public func process(iq block: [UInt8]) throws -> [IMetEvent] {
+        guard front != nil else { throw Failure.wrongInput("this receiver was made for audio") }
+        var events: [IMetEvent] = []
+        for full in pendingIQ.append(block) { events += try decodeIQBlock(full) }
+        return events
+    }
+
+    /// The events held back for an incomplete I/Q block (call once the stream has ended).
+    public func flush() throws -> [IMetEvent] {
+        guard front != nil else { throw Failure.wrongInput("this receiver was made for audio") }
+        guard let rest = pendingIQ.remainder() else { return [] }
+        return try decodeIQBlock(rest)
+    }
+
+private func decodeIQBlock(_ block: [UInt8]) throws -> [IMetEvent] {
         guard let front else { throw Failure.wrongInput("this receiver was made for audio") }
         let audio = front.process(iq: block)
         return handle(sync.process(tones.process(audio), audio: audio))

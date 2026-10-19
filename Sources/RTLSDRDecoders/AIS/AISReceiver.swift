@@ -174,7 +174,26 @@ public final class AISReceiver {
     public var rejectedHeaders: Int { channels.map(\.sync.rejected).reduce(0, +) }
     public var listeningOffsetsHz: [Double] { channels.map { $0.front?.listeningOffsetHz ?? 0 } }
 
+        /// I/Q is consumed in fixed blocks of 16384 samples, whatever the caller's pieces (see `FixedBlocks`): a receiver's
+    /// tracking state moves between blocks, so the same stream must always be cut the same way. Pieces are held until a
+    /// block is full; `flush()` takes what is left at the end of the stream.
+    private var pendingIQ = FixedBlocks(bytes: 32768)
+
     public func process(iq block: [UInt8]) throws -> [AISEvent] {
+        guard channels.allSatisfy({ $0.front != nil }) else { throw Failure.wrongInput("this receiver was made for audio") }
+        var events: [AISEvent] = []
+        for full in pendingIQ.append(block) { events += try decodeIQBlock(full) }
+        return events
+    }
+
+    /// The events held back for an incomplete I/Q block (call once the stream has ended).
+    public func flush() throws -> [AISEvent] {
+        guard channels.allSatisfy({ $0.front != nil }) else { throw Failure.wrongInput("this receiver was made for audio") }
+        guard let rest = pendingIQ.remainder() else { return [] }
+        return try decodeIQBlock(rest)
+    }
+
+private func decodeIQBlock(_ block: [UInt8]) throws -> [AISEvent] {
         guard channels.allSatisfy({ $0.front != nil }) else { throw Failure.wrongInput("this receiver was made for audio") }
         var events: [AISEvent] = []
         for channel in channels {

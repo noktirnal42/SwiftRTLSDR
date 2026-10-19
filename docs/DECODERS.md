@@ -14,6 +14,40 @@ published messages and recordings made with other receivers. The on-air checks a
 | Command | `rtlsdr-tool adsb [--ifile FILE] [--raw]` | `rtlsdr-tool uat [--ifile FILE \| --frames FILE] [--raw] [--nexrad DIR]` | `rtlsdr-tool ism [--ifile FILE] [--json] [--protocols N,...]`, `--code '{36}...'` | `rtlsdr-tool meteor [--ifile FILE \| --soft FILE] [--mode oqpsk\|qpsk] [--symbol-rate 72000\|80000] [--web PORT]` | `rtlsdr-tool sonde [--type rs41\|dfm\|m10\|imet] [--freq HZ \| --scan \| --ifile FILE \| --wav FILE] [--json]` | `rtlsdr-tool mesh [--preset LongFast] [--region US] [--channel NAME:KEY] [--ifile FILE] [--json]`; `rtlsdr-tool lora --ifile FILE` for plain LoRa; `--presets LongFast,MediumFast,...` (`--all-slots --center HZ`) for several at once | `rtlsdr-tool acars [--region us\|eu \| --freq MHZ,...] [--ifile FILE [--center HZ] \| --wav FILE] [--json]` | `rtlsdr-tool vdl2 [--region eu\|us \| --freq MHZ,...] [--ifile FILE [--center HZ]] [--json] [--raw]` |
 | Output compatible with | dump1090 `--raw` (AVR `*hex;` lines) | dump978 (`-hex;` / `+hex;rs=N;` lines) | rtl_433 `-F json` (same fields, same numbers, same time stamps for files) | PNG channel images and composite (as meteor_decode makes them), `.cadu` frames (as SatDump writes them), soft symbols (as meteor_demod writes them) | rs41mod, dfm09mod, m10m20mod and imet1rs_dft `--json` (the JSON lines radiosonde_auto_rx reads) | One line, or one JSON object, a packet; field names follow Meshtastic's protobufs | acarsdec `-o 4` (its JSON fields, same values) | dumpvdl2's JSON (`vdl2`/`avlc` objects, the fields this decoder knows), or its raw frames |
 
+## Using a decoder from an app
+
+One table for SignalHive's Decoder Hub: what to construct, how to feed it, what comes out. All of these take the
+dongle's u8 interleaved I/Q (two bytes per complex sample, I then Q) at the rate shown, tuned to the centre shown,
+unless the row says otherwise.
+
+**Any piece size works.** A call can take any number of bytes, odd counts included (a piece may end between the I and
+Q of a sample). The receivers that track state between blocks (POCSAG, RS41, DFM, M10, iMet, AIS and Meshtastic) take
+the caller's pieces into fixed internal blocks, so the same stream gives the same events however it is cut. Events come
+out of the call that completes them. Those receivers hold back up to one internal block (about 35 ms to 1 s, see the
+table), so **call `flush()` at the end of a stream** to get the last events. Every decoder below has a test that feeds
+its signal in one piece and in random pieces (odd sizes included) and compares the events exactly.
+
+| Decoder | Construct | Feed | Rate, centre | Events out | `flush()` | Chunking test |
+|---|---|---|---|---|---|---|
+| ADS-B / Mode S | `ModeSDemodulator()` | `process(_:) -> [ModeSFrame]` | 2 MS/s, 1090.000 MHz | `ModeSFrame`: `message`, `sampleIndex`, `signalDBFS`, `correctedBit` | yes | `ModeSDemodulatorTests.anyChunkingGives...` |
+| UAT (978) | `UATDemodulator()` | `process(_:) -> [UATFrame]` | 2.083334 MS/s, 978.000 MHz | `UATFrame`: `kind`, `payload`, `correctedSymbols`, `sampleIndex` | yes | `UATDemodulatorTests.anyChunkingGives...` |
+| ISM sensors | `ISMReceiver(sampleRate: 250_000, frequency: 433_920_000)` | `process(_:) -> [ISMEvent]` | 250 kS/s, 433.92 MHz (or the band's own frequency) | `ISMEvent`: `report` (`json()`), `protocolNumber`, `sampleIndex`, `isFSK` | yes | `ISMChunkingTests` |
+| POCSAG | `POCSAGReceiver(sampleRate: 240_000, offsetHz:)`, or `POCSAGReceiver(audioRate:)` for FM audio | `process(iq:) throws -> [POCSAGEvent]` (`process(audio:)` for audio) | any rate; the channel `offsetHz` above the tuned frequency | `POCSAGEvent`: `message`, `frequencyOffsetHz` | `flush() throws` | `POCSAGChunkingTests` |
+| RS41 radiosonde | `RS41Receiver(sampleRate: 240_000, offsetHz:)` | `process(iq:) -> [RS41Event]` | 240 kS/s in the tests, 400-406 MHz | `RS41Event`: `frame`, `report`, `sampleIndex`, `correlation`, `frequencyOffsetHz` | yes | `RS41Tests.anyChunking...` (canonical comparison) |
+| DFM radiosonde | `DFMReceiver(sampleRate: 96_000, offsetHz:)` | `process(iq:) -> [DFMEvent]` | 96 kS/s in the tests (one internal block is 1 s) | `DFMEvent`: `frame`, `report`, `sampleIndex`, `correlation`, `inverted` | yes | `DFMTests.anyChunking...` |
+| M10 / M20 radiosonde | `M10Receiver(sampleRate: 192_000, offsetHz:)` | `process(iq:) -> [M10Event]` | 192 kS/s in the tests | `M10Event`: `frame`, `report`, `sampleIndex`, `correlation`, `inverted` | yes | `M10Tests.anyChunking...` |
+| iMet radiosonde | `IMetReceiver(sampleRate: 240_000, offsetHz:, channelCutoffHz:)` | `process(iq:) throws -> [IMetEvent]` | 240 kS/s in the tests | `IMetEvent`: `frame`, `report`, `sampleIndex`, `correlation`, `frequencyOffsetHz` | `flush() throws` | `IMetTests.anyChunking...` |
+| Meshtastic (LoRa) | `MeshtasticMultiReceiver(listeners:, sampleRate:, centerHz:)` (throws) | `process(iq:) -> [MeshtasticFrame]` | 2 MS/s in the tests; each listener's `frequencyHz` | `MeshtasticFrame`: `listener` (preset, frequency), `frame` | yes | `MeshtasticMultiTests` (`severalPresets...`) |
+| ACARS | `ACARSReceiver(sampleRate:, centerHz:, channels:)` | `process(iq:) -> [ACARSReceiver.Reception]` | 2.4 MS/s covers five US channels | `Reception`: `channel`, `message`, `levelDB` | not needed (bursts are complete when they come out) | `ACARSTests` |
+| VDL Mode 2 | `VDL2Receiver(sampleRate:, centerHz:, channels:)`; the rate is a multiple of 42 kHz | `process(iq:) -> [VDL2Receiver.Reception]` | 1.05 MS/s (four channels on the hardware check) | `Reception`: `channel`, `frame` (`acars`, ...); `badFrames` | not needed | `VDL2Tests` |
+| AIS | `AISReceiver(sampleRate: 240_000, channels: [(offsetHz:, name:)])` | `process(iq:) throws -> [AISEvent]` | 240 kS/s; channels 161.975 and 162.025 MHz as offsets | `AISEvent`: `packet` (channel, bits, `message`), `sampleIndex`, `correlation`, `frequencyOffsetHz`, `report`, `frame` | `flush() throws` | `AISReceiverTests.anyChunking...` |
+
+**Statistics for a UI.** There is no one statistics type. Each event carries what its decoder measures (the level, the
+correlation, the frequency offset, the repaired symbols or bits, `badFrames` for VDL Mode 2). Frames seen and frames
+valid are what the app counts from the events; a count of frames that were rejected is only exposed where the table
+says so. A common `DecoderStatistics` has not been built. Lock is not reported by any decoder (for RS41 and the other
+sondes the carrier search is visible in `frequencyOffsetHz`).
+
 ## How they were checked
 
 ### Mode S / ADS-B

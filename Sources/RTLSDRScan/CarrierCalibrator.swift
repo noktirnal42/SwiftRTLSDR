@@ -22,6 +22,12 @@ public final class CarrierCalibrator {
         public var widthHz: Double
         public var binHz: Double
         public var transforms: Int
+        /// One standard error of `ppm` from the spread of the per-transform estimates (each transform's own peak). nil
+        /// until there are two transforms to compare.
+        public var standardErrorPPM: Double?
+        /// `standardErrorPPM` plus the reference's own accuracy (`referenceUncertaintyPPM`), summed without
+        /// cancellation so it is the conservative figure to quote. nil when `standardErrorPPM` is nil.
+        public var uncertaintyPPM: Double?
     }
 
     public let sampleRate: Double
@@ -29,9 +35,14 @@ public final class CarrierCalibrator {
     public let carrierHz: Double
     /// Only lines within this many ppm of where the carrier would be with a perfect crystal are considered.
     public let searchPPM: Double
+    /// The accuracy of the carrier's frequency itself, in ppm (a GPS-disciplined source: about 0.001; an ATSC pilot
+    /// from a station that is not checked: a couple of ppm). Added to the uncertainty of every measurement.
+    public let referenceUncertaintyPPM: Double
     private let fft: FFT
     private let window: [Double]
     private var power: [Double]
+    private var transformPower: [Double]
+    private var transformPPM: [Double] = []
     private var real: [Double], imaginary: [Double]
     private var filled = 0
     private var leftover: UInt8?
@@ -47,15 +58,20 @@ public final class CarrierCalibrator {
 
     /// - Parameters:
     ///   - fftSize: a power of two; the bin width is `sampleRate / fftSize` (2^18 at 1.024 MS/s: 3.9 Hz).
-    public init?(sampleRate: Double, tunedHz: Double, carrierHz: Double, searchPPM: Double = 150, fftSize: Int = 1 << 18) {
-        guard let fft = FFT(size: fftSize), sampleRate > 0, carrierHz > 0 else { return nil }
+    public init?(
+        sampleRate: Double, tunedHz: Double, carrierHz: Double, searchPPM: Double = 150, fftSize: Int = 1 << 18,
+        referenceUncertaintyPPM: Double = 0
+    ) {
+        guard let fft = FFT(size: fftSize), sampleRate > 0, carrierHz > 0, referenceUncertaintyPPM >= 0 else { return nil }
         self.sampleRate = sampleRate
         self.tunedHz = tunedHz
         self.carrierHz = carrierHz
         self.searchPPM = searchPPM
+        self.referenceUncertaintyPPM = referenceUncertaintyPPM
         self.fft = fft
         window = (0..<fftSize).map { 0.5 - 0.5 * cos(2 * Double.pi * Double($0) / Double(fftSize)) }
         power = [Double](repeating: 0, count: fftSize)
+        transformPower = [Double](repeating: 0, count: fftSize)
         real = [Double](repeating: 0, count: fftSize)
         imaginary = [Double](repeating: 0, count: fftSize)
     }
@@ -81,15 +97,22 @@ public final class CarrierCalibrator {
         filled += 1
         if filled == fft.size {
             fft.forward(real: &real, imaginary: &imaginary)
-            for k in 0..<fft.size { power[k] += real[k] * real[k] + imaginary[k] * imaginary[k] }
+            for k in 0..<fft.size {
+                transformPower[k] = real[k] * real[k] + imaginary[k] * imaginary[k]
+                power[k] += transformPower[k]
+            }
             transforms += 1
+            if let peak = peakOffset(in: transformPower) {
+                transformPPM.append((carrierHz / (tunedHz + peak.offset) - 1) * 1e6)
+            }
             filled = 0
         }
     }
 
-    /// The line found so far; nil before a whole transform, or if the search range is not inside the spectrum.
-    public func measurement() -> Measurement? {
-        guard transforms > 0 else { return nil }
+    /// Where the strongest line is in `spectrum` (bins unshifted, as `FFT` returns them), searched within
+    /// `searchPPM` of the expected place: its offset from the tuned frequency (quadratic interpolation of the log
+    /// power), the peak power, and the median power of the bins searched.
+    private func peakOffset(in spectrum: [Double]) -> (offset: Double, peak: Double, median: Double, width: Double)? {
         let size = fft.size, bin = sampleRate / Double(size)
         let expected = carrierHz - tunedHz
         let reach = carrierHz * searchPPM * 1e-6
@@ -102,12 +125,12 @@ public final class CarrierCalibrator {
         var best = first, bestPower = -1.0
         var searched: [Double] = []
         for n in first...last {
-            let p = power[index(Double(n) * bin)]
+            let p = spectrum[index(Double(n) * bin)]
             searched.append(p)
             if p > bestPower { bestPower = p; best = n }
         }
         let k = index(Double(best) * bin)
-        let left = power[(k - 1 + size) % size], right = power[(k + 1) % size]
+        let left = spectrum[(k - 1 + size) % size], right = spectrum[(k + 1) % size]
         // Quadratic through the log powers of the peak and its neighbours.
         let a = log(max(left, 1e-300)), b = log(max(bestPower, 1e-300)), c = log(max(right, 1e-300))
         let denominator = a - 2 * b + c
@@ -116,14 +139,32 @@ public final class CarrierCalibrator {
         // Half-power width: bins either side still above half the peak.
         var width = 1
         var step = 1
-        while step < 200, power[(k + step) % size] >= bestPower / 2 { width += 1; step += 1 }
+        while step < 200, spectrum[(k + step) % size] >= bestPower / 2 { width += 1; step += 1 }
         step = 1
-        while step < 200, power[(k - step + size) % size] >= bestPower / 2 { width += 1; step += 1 }
+        while step < 200, spectrum[(k - step + size) % size] >= bestPower / 2 { width += 1; step += 1 }
         searched.sort()
-        let median = max(searched[searched.count / 2], 1e-300)
-        let ppm = (carrierHz / (tunedHz + offset) - 1) * 1e6
-        return Measurement(offsetHz: offset, ppm: ppm, snrDB: 10 * log10(bestPower / median), widthHz: Double(width) * bin,
-                           binHz: bin, transforms: transforms)
+        return (offset, bestPower, max(searched[searched.count / 2], 1e-300), Double(width) * bin)
+    }
+
+    /// The line found so far; nil before a whole transform, or if the search range is not inside the spectrum.
+    public func measurement() -> Measurement? {
+        guard transforms > 0, let peak = peakOffset(in: power) else { return nil }
+        let bin = sampleRate / Double(fft.size)
+        let ppm = (carrierHz / (tunedHz + peak.offset) - 1) * 1e6
+        let standardError: Double? = transformPPM.count >= 2 ? Self.standardError(transformPPM) : nil
+        return Measurement(
+            offsetHz: peak.offset, ppm: ppm, snrDB: 10 * log10(peak.peak / peak.median), widthHz: peak.width,
+            binHz: bin, transforms: transforms,
+            standardErrorPPM: standardError,
+            uncertaintyPPM: standardError.map { $0 + referenceUncertaintyPPM }
+        )
+    }
+
+    /// The standard error of the mean of `values` (their sample standard deviation over the root of their count).
+    static func standardError(_ values: [Double]) -> Double {
+        let mean = values.reduce(0, +) / Double(values.count)
+        let variance = values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(values.count - 1)
+        return (variance / Double(values.count)).squareRoot()
     }
 
     /// The nominal pilot of an ATSC (US digital television) channel: 309 440.559 Hz above the channel's lower edge. A

@@ -439,7 +439,7 @@ struct DFMReceiverTests {
             events += receiver.process(iq: Array(iq[index..<end]))
             index = end
         }
-        return events
+        return events + receiver.flush()
     }
 
     /// FM audio from another receiver, with the opposite polarity, and noise.
@@ -453,6 +453,21 @@ struct DFMReceiverTests {
             #expect(seconds.count >= 10 && seconds.last == 1_434_018_031, "inverted \(inverted): \(seconds)")
             #expect(events.allSatisfy { $0.inverted == inverted })
         }
+    }
+
+    /// SH-4: any cutting of the stream, odd piece sizes included, gives the same events as one piece.
+    @Test func anyChunkingGivesExactlyWhatOneBigFeedGives() {
+        var modulator = DFMModulator(sampleRate: 96_000, carrierHz: 4_000)
+        let iq = modulator.iq(flight())
+        func chunked(_ plan: [Int]) -> [String] {
+            let receiver = DFMReceiver(sampleRate: 96_000)
+            return ChunkPlans.events(total: iq.count, plan: plan, feed: { range in
+                receiver.process(iq: Array(iq[range])).map { String(describing: $0) }
+            }, finish: { receiver.flush().map { String(describing: $0) } })
+        }
+        let whole = chunked([iq.count])
+        #expect(!whole.isEmpty)
+        for plan in ChunkPlans.anyPlans(seeds: [1, 2], count: 30, maximum: 60_000) { #expect(chunked(plan) == whole) }
     }
 
     /// The sonde 4 kHz from where the receiver starts listening: the carrier search finds it within the first second.

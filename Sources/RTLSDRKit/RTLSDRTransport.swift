@@ -13,7 +13,8 @@ public protocol RTLSDRTransport: AnyObject, Sendable {
     /// bytes queued so the dongle's small FIFO never waits on the host.
     ///
     /// `handler` receives each completed block, in order, on a USB completion queue: it must return quickly, must not
-    /// call `stopBulkStream()`, and the buffer is only valid during the call. `onError` is called at most once if the
+    /// call `stopBulkStream()`, and the buffer is only valid during the call. The buffer's count is in BYTES (two per
+    /// complex sample), never samples. `onError` is called at most once if the
     /// stream ends on its own (for example when the dongle is unplugged).
     func startBulkStream(
         bufferSize: Int,

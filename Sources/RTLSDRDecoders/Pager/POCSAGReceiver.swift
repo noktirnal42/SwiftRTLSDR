@@ -108,15 +108,31 @@ public final class POCSAGReceiver {
     public var listeningOffsetHz: Double { front?.listeningOffsetHz ?? 0 }
     public var lastSearch: (offsetHz: Double, snrDB: Double)? { front?.lastSearch }
 
+    /// I/Q is consumed in fixed blocks of `iqBlockSamples` (the frequency control moves between blocks, so a receiver
+    /// that took whatever piece the caller gave would decode the same messages with different offsets). Pieces are held
+    /// until a block is full; `flush()` takes the rest.
+    public static let iqBlockSamples = 8_192
+
     public func process(iq block: [UInt8]) throws -> [POCSAGEvent] {
         guard let front else { throw Failure.wrongInput("this receiver was made for audio") }
-        return handle(audio: front.process(iq: block), front: front)
+        var events: [POCSAGEvent] = []
+        for full in pendingIQ.append(block) { events += handle(audio: front.process(iq: full), front: front) }
+        return events
+    }
+
+    /// The events held back for an incomplete I/Q block (call once the stream has ended).
+    public func flush() throws -> [POCSAGEvent] {
+        guard let front else { throw Failure.wrongInput("this receiver was made for audio") }
+        guard let rest = pendingIQ.remainder() else { return [] }
+        return handle(audio: front.process(iq: rest), front: front)
     }
 
     public func process(audio: [Float]) throws -> [POCSAGEvent] {
         guard front == nil else { throw Failure.wrongInput("this receiver was made for I/Q") }
         return handle(audio: audio, front: nil)
     }
+
+    private var pendingIQ = FixedBlocks(bytes: 2 * POCSAGReceiver.iqBlockSamples)
 
     private func handle(audio: [Float], front: FMFrontEnd?) -> [POCSAGEvent] {
         var events: [POCSAGEvent] = []

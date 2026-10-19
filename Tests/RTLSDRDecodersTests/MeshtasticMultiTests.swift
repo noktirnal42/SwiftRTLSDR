@@ -78,7 +78,7 @@ struct MeshtasticMultiReceiverTests {
             frames += receiver.process(iq: Array(iq[index..<end]))
             index = end
         }
-        return frames
+        return frames + receiver.flush()
     }
 
     /// Three presets of different bandwidths in different places in one 2 MS/s capture, all at once.
@@ -95,6 +95,17 @@ struct MeshtasticMultiReceiverTests {
         // For trying the command line on the same capture: MESH_MULTI_DUMP=/path swift test --filter severalPresets
         if let path = ProcessInfo.processInfo.environment["MESH_MULTI_DUMP"] { try? Data(capture).write(to: URL(fileURLWithPath: path)) }
         let frames = run(receiver, capture)
+        // SH-4: any cutting of the stream, odd piece sizes included (a 2 MS/s capture is split mid-sample by the caller's
+        // buffers), gives the same frames as one piece.
+        func chunked(_ pieces: [Int]) -> [String] {
+            let fresh = try! MeshtasticMultiReceiver(listeners: listeners, sampleRate: rate, centerHz: tuned)
+            return ChunkPlans.events(total: capture.count, plan: pieces, feed: { range in
+                fresh.process(iq: Array(capture[range])).map { String(describing: $0) }
+            }, finish: { fresh.flush().map { String(describing: $0) } })
+        }
+        let whole = chunked([capture.count])
+        #expect(whole.count == frames.count)
+        for pieces in ChunkPlans.anyPlans(seeds: [1, 2], count: 3, maximum: 300_000) { #expect(chunked(pieces) == whole) }
         for (index, entry) in plan.enumerated() {
             let mine = frames.filter { $0.listener.preset == entry.0 }
             #expect(mine.map(\.frame.payload) == sent[index], "\(entry.0.rawValue): \(mine.count) frames")

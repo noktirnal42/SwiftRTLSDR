@@ -83,9 +83,9 @@ struct Arguments {
             guard let record = try device.readCalibration() else {
                 fail("--ppm eeprom: this dongle has no calibration stored (measure one with rtlsdr-tool calibrate)")
             }
-            let ppm = Int(record.ppm.rounded())
-            try device.setFrequencyCorrection(ppm: ppm)
-            FileHandle.standardError.write(Data(String(format: "frequency correction %d ppm, from the dongle's EEPROM (measured %.3f ppm)\n", ppm, record.ppm).utf8))
+            // The stored value is applied exactly (to the register's ~60 ppb), not rounded to whole ppm.
+            try device.setFrequencyCorrection(partsPerBillion: record.partsPerBillion)
+            FileHandle.standardError.write(Data(String(format: "frequency correction %+.3f ppm, from the dongle's EEPROM\n", record.ppm).utf8))
         } else {
             guard let ppm = Int(text) else { fail("--ppm is a whole number of ppm, or eeprom") }
             try device.setFrequencyCorrection(ppm: ppm)

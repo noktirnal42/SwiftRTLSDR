@@ -236,8 +236,24 @@ public final class MeshtasticMultiReceiver: @unchecked Sendable {
 
     public var listeners: [MeshtasticListener] { channels.map(\.listener) }
 
-    /// Frames from a block of interleaved u8 I/Q; a block may end between the I and Q of a sample.
+    /// Frames from interleaved u8 I/Q, any piece sizes (a piece may end between the I and Q of a sample). Consumed in
+    /// fixed blocks of 65 536 samples, so the same stream gives the same frames however the caller cut it; `flush()`
+    /// takes the last partial block.
+    private var pendingIQ = FixedBlocks(bytes: 2 * 65_536)
+
     public func process(iq block: [UInt8]) -> [MeshtasticFrame] {
+        var frames: [MeshtasticFrame] = []
+        for full in pendingIQ.append(block) { frames += decodeIQBlock(full) }
+        return frames
+    }
+
+    /// The frames held back for an incomplete block (call once the stream has ended).
+    public func flush() -> [MeshtasticFrame] {
+        guard let rest = pendingIQ.remainder() else { return [] }
+        return decodeIQBlock(rest)
+    }
+
+    private func decodeIQBlock(_ block: [UInt8]) -> [MeshtasticFrame] {
         var bytes = block
         if let i = leftover { bytes.insert(i, at: 0); leftover = nil }
         if bytes.count % 2 == 1 { leftover = bytes.removeLast() }

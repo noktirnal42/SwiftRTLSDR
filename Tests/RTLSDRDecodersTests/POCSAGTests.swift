@@ -245,7 +245,7 @@ struct POCSAGReceiverTests {
             events += try receiver.process(iq: Array(iq[index..<end]))
             index = end
         }
-        return events
+        return events + (try receiver.flush())
     }
 
     @Test func eachBitRateIsFoundFromAudio() throws {

@@ -19,6 +19,7 @@ usage:
   rtlsdr-tool set-serial <serial> [--write] [--backup FILE]
   rtlsdr-tool calibrate --freq <known carrier Hz> | --atsc CHANNEL [--seconds 10] [--rate 1024000] [--search 150] [--write [--label TEXT]]
   rtlsdr-tool calibrate --show | --set-ppm N [--label TEXT] [--write] | --clear [--write]
+                    | --fm <station Hz> [--seconds N] (measure only, from an FM stereo pilot)
   rtlsdr-tool hline [--freq 1420.405751768e6] [--rate 2400000] [--fft 1024] [--reference 2.5e6] [--switch 1] [--seconds 600]
                     [--smooth 1] [--csv hline.csv] [--lat D --lon D (--ra H --dec D | --az D --el D)] [--gain 40.2]
                     [--ifile SIGNAL.u8 --reference-file REF.u8]

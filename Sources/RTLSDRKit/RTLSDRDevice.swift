@@ -52,7 +52,7 @@ public final class RTLSDRDevice: @unchecked Sendable {
         var sampleRate: Double = 0
         var centerFrequency = 0
         var tunerGainTenthsDB: Int?
-        var frequencyCorrectionPPM = 0
+        var frequencyCorrectionPartsPerBillion = 0
         var pllLocked = true
         var tunerVCOBandCode = 0
         var retuneShortcuts: RetuneShortcuts = []
@@ -63,12 +63,20 @@ public final class RTLSDRDevice: @unchecked Sendable {
     public var centerFrequency: Int { withLock { settings.centerFrequency } }
     /// nil while automatic gain is on.
     public var tunerGainTenthsDB: Int? { withLock { settings.tunerGainTenthsDB } }
-    public var frequencyCorrectionPPM: Int { withLock { settings.frequencyCorrectionPPM } }
+    /// The correction in whole ppm, rounded toward zero. Use `frequencyCorrectionPartsPerBillion` for the exact value.
+    public var frequencyCorrectionPPM: Int { frequencyCorrectionPartsPerBillion / 1000 }
+    /// The correction as last set, in parts per billion (exact to the demodulator's register, about 60 ppb).
+    public var frequencyCorrectionPartsPerBillion: Int { withLock { settings.frequencyCorrectionPartsPerBillion } }
     /// False if the last retune could not lock the oscillator (samples are then off-frequency).
     public var pllLocked: Bool { withLock { settings.pllLocked } }
     /// The tuner oscillator's sub-band after the last retune (a diagnostic; see the README on level differences).
     public var tunerVCOBandCode: Int { withLock { settings.tunerVCOBandCode } }
     public var retuneShortcuts: RetuneShortcuts { withLock { settings.retuneShortcuts } }
+
+    /// Ends the `sampleStream` that is running, if any. Guarded separately from `controlLock`, which is held while a
+    /// stream starts.
+    private let sampleStreamLock = NSLock()
+    private var endSampleStream: (@Sendable () -> Void)?
 
     private let transport: RTLSDRTransport
     let chip: RTL2832U
@@ -166,7 +174,7 @@ public final class RTLSDRDevice: @unchecked Sendable {
             let intermediate = try chip.withI2CRepeater { try r820t.setBandwidth(rate) }
             try chip.setIntermediateFrequency(intermediate)
             if settings.centerFrequency > 0 { try retune() }
-            let actual = try chip.setSampleRate(rate, correctionPPM: settings.frequencyCorrectionPPM)
+            let actual = try chip.setSampleRate(rate, correctionPartsPerBillion: settings.frequencyCorrectionPartsPerBillion)
             settings.sampleRate = actual
             return actual
         }
@@ -214,12 +222,24 @@ public final class RTLSDRDevice: @unchecked Sendable {
     /// The corrections the demodulator can hold: its register is 14 bits signed, at 2^24 / 10^6 counts per ppm.
     public static let frequencyCorrectionRange: ClosedRange<Int> = -488...488
 
-    /// Corrects the crystal's error (positive = the crystal runs fast). Takes effect immediately.
+    /// The same range in parts per billion.
+    public static let frequencyCorrectionPartsPerBillionRange: ClosedRange<Int> = -488_000...488_000
+
+    /// Corrects the crystal's error in whole ppm (positive = the crystal runs fast). Takes effect immediately.
     public func setFrequencyCorrection(ppm: Int) throws {
         guard Self.frequencyCorrectionRange.contains(ppm) else { throw RTLSDRError.frequencyCorrectionOutOfRange(ppm) }
+        try setFrequencyCorrection(partsPerBillion: ppm * 1000)
+    }
+
+    /// Corrects the crystal's error to the nearest the demodulator can hold (about 60 ppb), so a measured fraction of
+    /// a ppm is applied rather than rounded away. Takes effect immediately.
+    public func setFrequencyCorrection(partsPerBillion: Int) throws {
+        guard Self.frequencyCorrectionPartsPerBillionRange.contains(partsPerBillion) else {
+            throw RTLSDRError.frequencyCorrectionOutOfRange(partsPerBillion)
+        }
         try withControl {
-            try chip.setFrequencyCorrection(ppm: ppm)
-            settings.frequencyCorrectionPPM = ppm
+            try chip.setFrequencyCorrection(partsPerBillion: partsPerBillion)
+            settings.frequencyCorrectionPartsPerBillion = partsPerBillion
             // The tuner's oscillator runs from the same crystal, so its PLL arithmetic must use the corrected value.
             r820t.setCrystalFrequency(UInt64(chip.correctedCrystalHz))
             if settings.centerFrequency > 0 { try retune() }
@@ -253,11 +273,16 @@ public final class RTLSDRDevice: @unchecked Sendable {
         return try collector.wait(timeout: expected + 3)
     }
 
-    /// Delivers samples (interleaved unsigned 8-bit I, Q, I, Q ...) to `handler` until `stopStreaming()`.
+    /// Delivers samples to `handler` until `stopStreaming()`.
+    ///
+    /// **The buffer's count is in bytes, not samples.** Each complex sample is two bytes, unsigned 8-bit I then Q, so a
+    /// buffer of `n` bytes holds `n / 2` samples. (SignalHive once read the byte count as a sample count and kept half
+    /// of every block; `StreamContractTests` pins this.)
     ///
     /// Blocks are `blockSize` bytes, with `bufferCount` requests kept queued so the dongle's FIFO never overflows.
     /// `handler` runs on a USB completion queue: return quickly (copy or enqueue the data), never call back into the
-    /// device from it, and don't keep the buffer. `onError` fires once if the stream dies by itself.
+    /// device from it, and don't keep the buffer (`sampleStream` copies it for you). `onError` fires once if the stream
+    /// dies by itself.
     public func startStreaming(
         blockSize: Int = 65_536,
         bufferCount: Int = 8,
@@ -273,8 +298,32 @@ public final class RTLSDRDevice: @unchecked Sendable {
 
     public var isStreaming: Bool { transport.isStreaming }
 
+    /// Stops the stream, whichever API started it. A `sampleStream` that is running ends normally here.
     public func stopStreaming() {
         transport.stopBulkStream()
+        let end: (@Sendable () -> Void)? = sampleStreamLock.withLock {
+            defer { endSampleStream = nil }
+            return endSampleStream
+        }
+        end?()
+    }
+
+    /// The stream as an async sequence of copied blocks, for callers that would rather not use a callback. It ends
+    /// normally when `stopStreaming()` is called, and throws if the dongle stops streaming on its own (for example
+    /// when it is unplugged). Only one stream of either kind runs at a time.
+    public func sampleStream(blockSize: Int = 65_536, bufferCount: Int = 8) throws -> AsyncThrowingStream<IQBlock, Error> {
+        var output: AsyncThrowingStream<IQBlock, Error>.Continuation?
+        let stream = AsyncThrowingStream<IQBlock, Error>(bufferingPolicy: .unbounded) { output = $0 }
+        guard let continuation = output else { throw RTLSDRError.alreadyStreaming }
+        try startStreaming(
+            blockSize: blockSize,
+            bufferCount: bufferCount,
+            onError: { continuation.finish(throwing: $0) },
+            handler: { continuation.yield(IQBlock(bytes: Array($0))) }
+        )
+        sampleStreamLock.withLock { endSampleStream = { continuation.finish() } }
+        continuation.onTermination = { @Sendable [weak self] _ in self?.stopStreaming() }
+        return stream
     }
 
     public func close() {
@@ -292,6 +341,17 @@ public final class RTLSDRDevice: @unchecked Sendable {
             transport.close()
         }
     }
+}
+
+/// One block of streamed samples, copied out of the USB buffer so it can be kept.
+public struct IQBlock: Sendable, Equatable {
+    /// Interleaved unsigned 8-bit I, Q, I, Q ... Two bytes per complex sample.
+    public let bytes: [UInt8]
+
+    public init(bytes: [UInt8]) { self.bytes = bytes }
+
+    /// Complex samples in `bytes`: half the byte count (a trailing odd byte is not a whole sample and is not counted).
+    public var sampleCount: Int { bytes.count / 2 }
 }
 
 /// Gathers streamed blocks until enough bytes have arrived.
